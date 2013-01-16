@@ -11,6 +11,7 @@ import plan_runner.visitors.PredicateVisitor;
  * ve1 LIKE ve2 (bigger smaller)
  * WORKS ONLY for pattern '%value%'
  */
+
 public  class LikePredicate implements Predicate {
     private ValueExpression<String> _ve1, _ve2;
 

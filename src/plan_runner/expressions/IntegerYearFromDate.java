@@ -97,6 +97,17 @@ public class IntegerYearFromDate implements ValueExpression<Integer> {
 	public boolean isNegative() {
 		return false;
 	}
+
+	@Override
+	public Integer eval(List<String> tuple, Long tupleMultiplicity) {
+		Date date = _veDate.eval(tuple);
+        
+        Calendar c = Calendar.getInstance();
+        c.setTime(date);
+        int year = c.get(Calendar.YEAR);
+
+        return year;
+	}
     
     
 

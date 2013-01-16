@@ -105,8 +105,7 @@ public class LocalMergeResults {
                 cr = new ColumnReference(wrapper, 1);
             }else{
                 cr = new ColumnReference(wrapper, 0);
-            }
-            
+            } 
             if(lastAgg instanceof AggregateAvgOperator){
                 overallAgg = new AggregateAvgOperator(cr, map);
             }else{
@@ -124,7 +123,7 @@ public class LocalMergeResults {
             try {
                 String path = getResultFilePath(map);
                 List<String> lines = MyUtilities.readFileLinesSkipEmpty(path);
-
+              
                 for(String line: lines){
                     //List<String> tuple = Arrays.asList(line.split("\\s+=\\s+"));
                     //we want to catch exactly one space between and after =.

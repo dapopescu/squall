@@ -112,4 +112,22 @@ public class Division implements ValueExpression<Double> {
 		return false;
 	}
 
+	@Override
+	public Double eval(List<String> tuple, Long tupleMultiplicity) {
+		ValueExpression firstVE = _veList.get(0);
+        Object firstObj = firstVE.eval(tuple);
+        NumericConversion firstType = (NumericConversion) firstVE.getType();
+        double result = firstType.toDouble(firstObj);
+
+        for(int i = 1; i < _veList.size(); i++){
+            ValueExpression currentVE = _veList.get(i);
+            Object currentObj = currentVE.eval(tuple);
+            NumericConversion currentType = (NumericConversion) currentVE.getType();
+            result /= currentType.toDouble(currentObj);
+        }
+        result *= tupleMultiplicity;
+        
+        return _wrapper.fromDouble(result);
+	}
+
 }

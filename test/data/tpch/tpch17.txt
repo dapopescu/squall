@@ -1,0 +1,47 @@
+mysql> select sum(l_extendedprice) / 7.0 as avg_yearly from LINEITEM, PART where p_partkey = l_partkey and p_brand = 'Brand#23' and p_container = 'MED BOX' and l_quantity < ( select 0.2 * avg(l_quantity) from LINEITEM where l_partkey = p_partkey );
++------------+
+| avg_yearly |
++------------+
+|       NULL |
++------------+
+1 row in set (0.00 sec)
+
+mysql> select sum(l_extendedprice) / 7.0 as avg_yearly from LINEITEM, PART where p_partkey = l_partkey and p_brand = 'Brand#33' and p_container = 'MED BOX' and l_quantity < ( select 0.2 * avg(l_quantity) from LINEITEM where l_partkey = p_partkey );
++------------+
+| avg_yearly |
++------------+
+| 691.471429 |
++------------+
+1 row in set (0.70 sec)
+
+mysql> select sum(l_extendedprice) / 7.0 as avg_yearly from LINEITEM, PART where p_partkey = l_partkey and p_brand = 'Brand#34' and p_container = 'MED BOX' and l_quantity < ( select 0.2 * avg(l_quantity) from LINEITEM where l_partkey = p_partkey );
++-------------+
+| avg_yearly  |
++-------------+
+| 2350.182857 |
++-------------+
+1 row in set (0.82 sec)
+
+mysql> select sum(l_extendedprice) / 7.0 as avg_yearly from LINEITEM, PART where p_partkey = l_partkey and p_brand = 'Brand#34' and p_container = 'MED JAR' and l_quantity < ( select 0.2 * avg(l_quantity) from LINEITEM where l_partkey = p_partkey );
++-------------+
+| avg_yearly  |
++-------------+
+| 4515.361429 |
++-------------+
+1 row in set (2.93 sec)
+
+
+?????create view a as select l_partkey, l_extendedprice, l_quantity from LINEITEM group by l_partkey;   
+
+????create view b as select l_partkey, p_brand, p_container, 0.2 * avg(l_quantity) as avg_quantity  from LINEITEM, PART where l_partkey = p_partkey group by l_partkey;
+
+????select sum(l_extendedprice) / 7.0 as avg_yearly from a, b where a.l_partkey = b.l_partkey and a.l_quantity < b.avg_quantity
+and b.p_brand = 'Brand#34' and b.p_container = 'MED JAR';
+
+create view a as select l_partkey, l_extendedprice, l_quantity from LINEITEM, PART where l_partkey = p_partkey and 
+p_brand = 'Brand#34' and p_container = 'MED JAR'; 
+
+create view b as select l_partkey, 0.2 * avg(l_quantity) as avg_quantity  from LINEITEM group by l_partkey;
+
+select sum(l_extendedprice) / 7.0 as avg_yearly from a, b where a.l_partkey = b.l_partkey and l_quantity < avg_quantity;
+

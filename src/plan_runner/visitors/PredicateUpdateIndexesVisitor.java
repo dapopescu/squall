@@ -7,6 +7,7 @@ import plan_runner.predicates.AndPredicate;
 import plan_runner.predicates.BetweenPredicate;
 import plan_runner.predicates.ComparisonPredicate;
 import plan_runner.predicates.LikePredicate;
+import plan_runner.predicates.LikePredicateGeneral;
 import plan_runner.predicates.OrPredicate;
 import plan_runner.predicates.Predicate;
 
@@ -71,6 +72,10 @@ public class PredicateUpdateIndexesVisitor implements PredicateVisitor{
 	}
 
     public void visit(LikePredicate like) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+    
+    public void visit(LikePredicateGeneral like) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 	

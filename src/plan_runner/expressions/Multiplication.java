@@ -110,5 +110,17 @@ public class Multiplication<T extends Number & Comparable<T>> implements ValueEx
 	public boolean isNegative() {
 		return false;
 	}
+	
+	@Override
+	public T eval(List<String> tuple, Long tupleMultiplicity) {
+		 double result = 0;
+	        for(ValueExpression factor: _veList){
+	            Object currentVal = factor.eval(tuple);
+	            NumericConversion currentType = (NumericConversion)(factor.getType());
+	            result *= currentType.toDouble(currentVal);
+	        }
+	        result *= tupleMultiplicity;
+	        return _wrapper.fromDouble(result);
+	}
 
 }

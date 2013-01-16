@@ -25,8 +25,6 @@ public class AggregationStorage<V> extends KeyValueStore<Object, V> {
 		_wrapper = wrapper;
 		_outerAggOp = outerAggOp;
 		_singleEntry = singleEntry;
-		if (wrapper != null) 
-			super.setTypeConversion(_wrapper);
 		System.out.println("Initialized Aggregation Storage with uniqId = " + this.getUniqId());
 	}
 
@@ -46,7 +44,8 @@ public class AggregationStorage<V> extends KeyValueStore<Object, V> {
 	public V update(Object... data) {
 		Object obj = data[0];
 		Object key = _singleEntry ? SINGLE_ENTRY_KEY : data[1];
-	//	System.out.println("obj = " + obj + " key = " + key);
+		
+		//System.out.println("obj = " + obj + " key = " + key);
 		V value, newValue;
 		ArrayList<V> list = super.__access(false, key);
 		if(list == null) {
@@ -55,13 +54,27 @@ public class AggregationStorage<V> extends KeyValueStore<Object, V> {
 		} else {
 			value = list.get(0);
 		}
+		//take multiplicity info into account
+		if (data.length > 2) {
+			Long tupleMultiplicity = (Long) data[2];
+			
+			if (obj instanceof List) {
+				newValue = (V) _outerAggOp.runAggregateFunction((V)value, (List<String>)obj, tupleMultiplicity);
+			} else {
+				newValue = (V) _outerAggOp.runAggregateFunction((V)value, (V)obj, tupleMultiplicity);
+			}
+		}
+		else {
+		
 		if (obj instanceof List) {
 	//		System.out.println("LIST : " + (List<String>)obj);
 			newValue = (V) _outerAggOp.runAggregateFunction((V)value, (List<String>)obj);
 		} else {
 			newValue = (V) _outerAggOp.runAggregateFunction((V)value, (V)obj);
 		}
+		}
 		super.__update(false, key, value, newValue);
+		
 		return newValue;
 	}
 
@@ -118,6 +131,14 @@ public class AggregationStorage<V> extends KeyValueStore<Object, V> {
 				super.update(key, oldValue, newValue);
 			}
 		}
+	}
+	
+	public TypeConversion getType() {
+		return _wrapper;
+	}
+	
+	public AggregateOperator getAggregationOperator() {
+		return _outerAggOp;
 	}
 
 }

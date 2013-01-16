@@ -50,6 +50,19 @@ public class HashIndex<KeyType> implements Index<KeyType> {
 		
 	}
 
+	@Override
+	public void remove(KeyType key, Integer row_id) {
+		TIntArrayList idsList = _index.get(key);
+		if(idsList == null){
+			_index.remove(key);
+		}
+		else {
+			int index = idsList.binarySearch(row_id);
+			idsList.remove(index);
+			if (idsList.size() == 0)
+				_index.remove(key);
+		}
+	}
 	
 
 

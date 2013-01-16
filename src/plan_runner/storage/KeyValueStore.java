@@ -35,10 +35,6 @@ public class KeyValueStore<K, V> extends BasicStore {
 		this._tc = tc;
 	}
 
-	public void setTypeConversion(TypeConversion tc) {
-		this._tc = tc;
-	}
-
 	public KeyValueStore(int storesizemb, int hash_indices, Map conf) {
 		super(storesizemb);
 		this._storageManager = new StorageManager<V>(this, conf);
@@ -196,10 +192,9 @@ public class KeyValueStore<K, V> extends BasicStore {
 		for (Iterator<K> it = keys.iterator() ; it.hasNext() ; ) {
 			K key = it.next();
 			List<V> thisValues = this.access(key);
-			List<V> storeValues = (List<V>)store.access(key);
+			List<V> storeValues = (List)store.access(key);
 			Collections.sort((List)thisValues);
 			Collections.sort((List)storeValues);
-			
 			// Compare value by value
 			int index = 0;
 			Iterator<V> iterator = thisValues.iterator();
@@ -235,11 +230,10 @@ public class KeyValueStore<K, V> extends BasicStore {
 				stream.print(" = ");
 				values = entry.getValues();
 				for (V v : values) {
-					if (this._tc != null) {
+					if (this._tc != null)
 						stream.print(_tc.toString(v));
-					} else {
+					else 
 						stream.print(v.toString());
-					}
 				}
 				stream.println("");
 			}
@@ -261,11 +255,10 @@ public class KeyValueStore<K, V> extends BasicStore {
 	
 	protected Set<K> keySet() {
 		Set<K> memKeys = this._memstore.keySet();
-                //YANIS: TODO
-		//String[] storageGroupIds = this._storageManager.getGroupIds();
-		//Set<String> storageKeys = new HashSet<String>(Arrays.asList(storageGroupIds));
+		String[] storageGroupIds = this._storageManager.getGroupIds();
+		Set<String> storageKeys = new HashSet<String>(Arrays.asList(storageGroupIds));
 		Set finalSet = new HashSet(memKeys);
-		//finalSet.addAll(storageKeys);	
+		finalSet.addAll(storageKeys);	
 		return finalSet;
 	}
 
@@ -293,6 +286,61 @@ public class KeyValueStore<K, V> extends BasicStore {
 		}
 
 	}
+
+	@Override
+	public Object remove(Object... data) {
+		K key = (K)data[0];
+		V returnedValue = null;
+		V value = null;
+		if (data.length > 1)
+			value = (V)data[1];
+		
+		ArrayList<V> values;
+		String groupId = key.toString();
+		boolean inMem = (this._memstore.containsKey(key) == true);
+		boolean inDisk = _storageManager.existsInStorage(groupId);
+
+		// If element is not in disk and not in mem, return null
+		if (!inMem && !inDisk) {
+			return null;
+		}
+
+		// First remove from memory if necessary
+		if (inMem) {		
+			Object obj = this._memstore.get(key);
+			HashEntry<K, V> entry = _replAlg.get(obj);
+			values = entry.getValues();
+	
+			if (data.length > 1) {
+				// Get the index of the old value (if it exists)
+				int index = values.indexOf(value);
+				if (index != -1) {	
+					V removedValue = values.remove(index);
+					this._memoryManager.releaseMemory(removedValue);
+					returnedValue = removedValue;
+				}
+				else {
+					System.out.println("KeyValueStore: BUG: No element for key " + key + " found in store, but store's metadata register elements.");
+					System.exit(0);
+				}
+			}
+			//remove whole entry
+			// Written whole list to storage
+			if (values.size() == 0 || data.length == 1) {
+				_memstore.remove(key);
+				_replAlg.remove(obj);
+				// Release memory for key and for values
+				this._memoryManager.releaseMemory(entry.getKey());
+			}
+		}
+
+		// Now update storage if necessary
+		if (inDisk) {
+			returnedValue = (V) _storageManager.remove(groupId, value);
+		}
+	
+		return returnedValue;
+	} 
 
 
 }

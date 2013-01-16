@@ -6,8 +6,11 @@ import java.util.List;
 import java.util.Map;
 import org.apache.log4j.Logger;
 import plan_runner.conversion.NumericConversion;
+import plan_runner.conversion.SumCount;
 import plan_runner.conversion.TypeConversion;
 import plan_runner.expressions.Addition;
+import plan_runner.expressions.ColumnReference;
+import plan_runner.expressions.Multiplication;
 import plan_runner.expressions.ValueExpression;
 import plan_runner.expressions.ValueSpecification;
 import plan_runner.storage.AggregationStorage;
@@ -108,7 +111,7 @@ public class AggregateSumOperator<T extends Number & Comparable<T>> implements A
 
         //from Operator
         @Override
-        public List<String> process(List<String> tuple){
+        public List<String> process(List<String> tuple, Object... tupleInfo){
             _numTuplesProcessed++;
             if(_distinct != null){
                 tuple = _distinct.process(tuple);
@@ -122,7 +125,15 @@ public class AggregateSumOperator<T extends Number & Comparable<T>> implements A
             }else{
                 tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _map);
             }
-            T value = _storage.update(tuple, tupleHash);
+       
+            
+            T value = null;
+            if (tupleInfo.length > 0) {
+            	value = _storage.update(tuple, tupleHash, (Long)tupleInfo[0]);
+            }
+            else  
+            	value = _storage.update(tuple, tupleHash);            
+            
             String strValue = _wrapper.toString(value);
 
             // propagate further the affected tupleHash-tupleValue pair
@@ -222,5 +233,53 @@ public class AggregateSumOperator<T extends Number & Comparable<T>> implements A
     public void accept(OperatorVisitor ov){
         ov.visit(this);
     }
+
+	@Override
+	public T runAggregateFunction(T value, List<String> tuple,
+			Long tupleMultiplicity) {
+		ValueExpression<T> base = new ValueSpecification<T>(_wrapper, value);
+        Addition<T> result = new Addition<T>(base, _ve);
+        return result.eval(tuple, tupleMultiplicity);
+	}
+
+	@Override
+	public T runAggregateFunction(T value1, T value2, Long multiplicity) {
+		 ValueExpression<T> ve1 = new ValueSpecification<T>(_wrapper, value1);
+         ValueExpression<T> ve2 = new ValueSpecification<T>(_wrapper, value2);
+         ValueExpression<Long> vem = new ValueSpecification<Long>(_wrapper, multiplicity);
+         Multiplication<T> resultMultiplication = new Multiplication<T>(ve2, vem);
+         Addition<T> result = new Addition<T>(ve1, resultMultiplication);
+         return result.eval(null);
+	}
+
+	//for second column, as the first one is represented by the group by keys
+	@Override
+	public AggregateOperator createInstance() {
+		return new AggregateSumOperator<T>(new ColumnReference<T>(_wrapper, 1), _map);
+	}
+
+	@Override
+	public List<String> getAggregateValue(List<String> tuple) {
+		String tupleHash;
+        if(_groupByType == GB_PROJECTION){
+            tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _groupByProjection.getExpressions(), _map);
+        }else{
+            tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _map);
+        }
+        List<T> values = _storage.access(tupleHash);
+        if (values != null) {
+        	T value = values.get(0);
+        
+        	String strValue = _wrapper.toString(value);
+
+        	// propagate further the affected tupleHash-tupleValue pair
+        	List<String> aggTuple = new ArrayList<String>();
+        	aggTuple.add(tupleHash);
+        	aggTuple.add(strValue);
+        
+        	return aggTuple;
+        }
+        return null;
+	}
                 
 }

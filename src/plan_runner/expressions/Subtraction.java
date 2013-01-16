@@ -114,5 +114,22 @@ public class Subtraction<T extends Number & Comparable<T>> implements ValueExpre
 		return false;
 	}
 
+	@Override
+	public T eval(List<String> tuple, Long tupleMultiplicity) {
+		ValueExpression firstVE = _veList.get(0);
+        Object firstObj = firstVE.eval(tuple);
+        NumericConversion firstType = (NumericConversion) firstVE.getType();
+        double result = firstType.toDouble(firstObj);
+
+        for(int i = 1; i < _veList.size(); i++){
+            ValueExpression currentVE = _veList.get(i);
+            Object currentObj = currentVE.eval(tuple);
+            NumericConversion currentType = (NumericConversion) currentVE.getType();
+            result -= currentType.toDouble(currentObj) * tupleMultiplicity;
+        }
+       
+        return _wrapper.fromDouble(result);
+	}
+
 
 }

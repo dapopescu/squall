@@ -1,6 +1,5 @@
 package plan_runner.utilities;
 
-import backtype.storm.generated.Grouping;
 import backtype.storm.spout.SpoutOutputCollector;
 import backtype.storm.task.OutputCollector;
 import backtype.storm.task.TopologyContext;
@@ -17,17 +16,24 @@ import java.io.StringWriter;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import org.apache.log4j.Logger;
+
+import plan_runner.components.Component;
+import plan_runner.components.OperatorComponent;
 import plan_runner.conversion.DoubleConversion;
 import plan_runner.conversion.TypeConversion;
 import plan_runner.expressions.ValueExpression;
+import plan_runner.operators.AggregateCountOperator;
 import plan_runner.operators.AggregateOperator;
+import plan_runner.operators.AggregateSumOperator;
+import plan_runner.storage.AggregationStorage;
+import plan_runner.storage.BasicStore;
+import plan_runner.storage.ValueStore;
 import plan_runner.storm_components.StormComponent;
 import plan_runner.storm_components.StormEmitter;
+import plan_runner.storm_components.StormOperator;
 import plan_runner.storm_components.StormSrcHarmonizer;
 import plan_runner.thetajoin.matrix_mapping.MatrixAssignment;
 
@@ -36,6 +42,7 @@ public class MyUtilities{
         private static Logger LOG = Logger.getLogger(MyUtilities.class);
 
         public static final String SINGLE_HASH_KEY = "SingleHashEntry";
+        public static final int AGGREGATION_HASH_KEY = 0;
 
         public static String getStackTrace(Throwable aThrowable) {
             final Writer result = new StringWriter();
@@ -216,7 +223,7 @@ public class MyUtilities{
             }
 
             //remove one extra HASH_DELIMITER at the end
-
+            
             int hdLength = columnDelimiter.length();
             int fullLength = hashStrBuf.length();
             return hashStrBuf.substring(0, fullLength - hdLength);
@@ -271,38 +278,6 @@ public class MyUtilities{
             return currentBolt;
         }
         
-        public static InputDeclarer attachEmitterCustom(Map map, List<String> fullHashList, InputDeclarer currentBolt,
-                StormEmitter emitter1, StormEmitter... emittersArray){
-            List<StormEmitter> emittersList = new ArrayList<StormEmitter>();
-            emittersList.add(emitter1);
-            emittersList.addAll(Arrays.asList(emittersArray));
-
-            for(StormEmitter emitter: emittersList){
-                String[] emitterIDs = emitter.getEmitterIDs();
-                for(String emitterID: emitterIDs){
-                    currentBolt = currentBolt.customGrouping(emitterID,
-                            new BalancedStreamGrouping(map, fullHashList));
-                }
-            }
-            return currentBolt;
-        }
-        
-        public static InputDeclarer attachEmitterBatch(Map map, InputDeclarer currentBolt,
-                StormEmitter emitter1, StormEmitter... emittersArray){
-            List<StormEmitter> emittersList = new ArrayList<StormEmitter>();
-            emittersList.add(emitter1);
-            emittersList.addAll(Arrays.asList(emittersArray));
-
-            for(StormEmitter emitter: emittersList){
-                String[] emitterIDs = emitter.getEmitterIDs();
-                for(String emitterID: emitterIDs){
-                    currentBolt = currentBolt.customGrouping(emitterID,
-                            new BatchStreamGrouping(map));
-                }
-            }
-            return currentBolt;
-        }
-        
         public static InputDeclarer thetaAttachEmitterComponents(InputDeclarer currentBolt, 
                 StormEmitter emitter1, StormEmitter emitter2,List<String> allCompNames,MatrixAssignment assignment,Map map){
         	
@@ -322,6 +297,22 @@ public class MyUtilities{
                 String[] emitterIDs = emitter.getEmitterIDs();
                 for(String emitterID: emitterIDs){
                     currentBolt = currentBolt.customGrouping(emitterID, mapping);
+                }
+            }
+            return currentBolt;
+        }
+
+        public static InputDeclarer attachEmitterCustom(Map map, List<String> fullHashList, InputDeclarer currentBolt,
+                StormEmitter emitter1, StormEmitter... emittersArray){
+            List<StormEmitter> emittersList = new ArrayList<StormEmitter>();
+            emittersList.add(emitter1);
+            emittersList.addAll(Arrays.asList(emittersArray));
+
+            for(StormEmitter emitter: emittersList){
+                String[] emitterIDs = emitter.getEmitterIDs();
+                for(String emitterID: emitterIDs){
+                    currentBolt = currentBolt.customGrouping(emitterID,
+                            new BalancedStreamGrouping(map, fullHashList));
                 }
             }
             return currentBolt;
@@ -352,69 +343,34 @@ public class MyUtilities{
         }
 
         public static boolean isFinalAck(List<String> tuple, Map map){
-            return (!isAckEveryTuple(map)) && isFinalAck(tuple.get(0));
-        }
-        
-        public static boolean isFinalAckManualBatching(String tupleString, Map map){
-            return (!isAckEveryTuple(map)) && isFinalAck(tupleString);
-        }
-        
-        private static boolean isFinalAck(String tupleString){
-            return tupleString.equals(SystemParameters.LAST_ACK);
+            return (!isAckEveryTuple(map)) && tuple.get(0).equals(SystemParameters.LAST_ACK);
         }
 
         //in ProcessFinalAck and dumpSignal we have acking at the end, because we return after that
         public static void processFinalAck(int numRemainingParents,
-                int hierarchyPosition, 
-                Map conf,
-                Tuple stormTupleRcv, 
-                OutputCollector collector) {
+                int hierarchyPosition, Tuple stormTupleRcv, OutputCollector collector) {
             if(numRemainingParents == 0){
             //this task received from all the parent tasks SystemParameters.LAST_ACK
                 if(hierarchyPosition != StormComponent.FINAL_COMPONENT){
                 //if this component is not the last one
-                    Values values = createUniversalFinalAckTuple(conf);
-                    collector.emit(values);
+                    List<String> lastTuple = new ArrayList<String>(Arrays.asList(SystemParameters.LAST_ACK));
+                    collector.emit(new Values("N/A", lastTuple, "N/A", 1L));
                 }else{
                     collector.emit(SystemParameters.EOF_STREAM, new Values(SystemParameters.EOF));
                 }
             }
             collector.ack(stormTupleRcv);
         }
-        
-        public static Values createUniversalFinalAckTuple(Map map) {
-            Values values = new Values();
-            values.add("N/A");
-            if(!MyUtilities.isManualBatchingMode(map)){
-                List<String> lastTuple = new ArrayList<String>(Arrays.asList(SystemParameters.LAST_ACK));
-                values.add(lastTuple);
-                values.add("N/A");
-            }else{
-                values.add(SystemParameters.LAST_ACK);
-            }
-            if(MyUtilities.isCustomTimestampMode(map)){
-                values.add(0);
-            }
-            return values;
-        }        
 
         public static void processFinalAck(int numRemainingParents,
-                int hierarchyPosition, 
-                Map conf,
-                Tuple stormTupleRcv, 
-                OutputCollector collector, 
-                PeriodicBatchSend periodicBatch) {
+                int hierarchyPosition, Tuple stormTupleRcv, OutputCollector collector, PeriodicBatchSend periodicBatch) {
             if(numRemainingParents == 0){
                 if(periodicBatch != null){
                     periodicBatch.cancel();
                     periodicBatch.getComponent().batchSend();
                 }
             }
-            processFinalAck(numRemainingParents, 
-                    hierarchyPosition, 
-                    conf,
-                    stormTupleRcv, 
-                    collector);
+            processFinalAck(numRemainingParents, hierarchyPosition, stormTupleRcv, collector);
         }
 
         public static void dumpSignal(StormComponent comp, Tuple stormTupleRcv, OutputCollector collector) {
@@ -430,46 +386,12 @@ public class MyUtilities{
             return (hierarchyPosition != StormComponent.FINAL_COMPONENT) && !isBatchOutputMode(batchOutputMillis);
         }
 
-        public static Values createTupleValues(List<String> tuple, 
-                long timestamp,
-                String componentIndex,
-                List<Integer> hashIndexes, 
-                List<ValueExpression> hashExpressions, 
-                Map conf) {
-            
-            String outputTupleHash = MyUtilities.createHashString(tuple, hashIndexes, hashExpressions, conf);
-            if(MyUtilities.isCustomTimestampMode(conf)){
-                return new Values(componentIndex, tuple, outputTupleHash, timestamp);
-            }else{
-                return new Values(componentIndex, tuple, outputTupleHash);
-            }
-        }
-        
-        public static boolean isCustomTimestampMode(Map map){
-            return SystemParameters.isExisting(map, "CUSTOM_TIMESTAMP") &&
-                    SystemParameters.getBoolean(map, "CUSTOM_TIMESTAMP");
-        }
+       
+        public static Values createTupleValues(List<String> tuple, String componentIndex,
+                List<Integer> hashIndexes, List<ValueExpression> hashExpressions, Map conf) {
 
-        public static boolean isManualBatchingMode(Map map){
-            return SystemParameters.isExisting(map, "BATCH_SEND_MODE") && 
-                    SystemParameters.getString(map, "BATCH_SEND_MODE").equalsIgnoreCase("MANUAL_BATCH");
-        }        
-        
-        public static boolean isThrottlingMode(Map map) {
-            return SystemParameters.isExisting(map, "BATCH_SEND_MODE") && 
-                    SystemParameters.getString(map, "BATCH_SEND_MODE").equalsIgnoreCase("THROTTLING");
-        }
-        
-        public static boolean checkSendMode(Map map){
-            if(SystemParameters.isExisting(map, "BATCH_SEND_MODE")){
-                String mode = SystemParameters.getString(map, "BATCH_SEND_MODE");
-                if (!mode.equalsIgnoreCase("THROTTLING") &&
-                        !mode.equalsIgnoreCase("SEND_AND_WAIT") &&
-                        !mode.equalsIgnoreCase("MANUAL_BATCH")){
-                    return false;
-                }
-            }
-            return true;
+            String outputTupleHash = MyUtilities.createHashString(tuple, hashIndexes, hashExpressions, conf);
+            return new Values(componentIndex, tuple, outputTupleHash);
         }
 
         /*
@@ -489,7 +411,7 @@ public class MyUtilities{
         public static void sendTuple(Values stormTupleSnd, SpoutOutputCollector collector, Map conf) {
             String msgId = null;
             if(MyUtilities.isAckEveryTuple(conf)){
-                msgId = "T"; //as short as possible
+                msgId = "TrackTupleAck";
             }
 
             if(msgId != null){
@@ -566,48 +488,82 @@ public class MyUtilities{
             int length = parts.length;
             return parts[length - (fromEnd +1)];
         }
+        
+        public static Values createTupleValues(List<String> tuple, String componentIndex,
+                List<Integer> hashIndexes, List<ValueExpression> hashExpressions, 
+                Map conf, 
+                Object... tupleInfo) {
 
-        public static boolean isPrintLatency(int hierarchyPosition, Map conf) {
-            return MyUtilities.isCustomTimestampMode(conf) && hierarchyPosition == StormComponent.FINAL_COMPONENT;
-        }
-
-
-        //collects all the task ids for "default" stream id
-        public static List<Integer> findTargetTaskIds(TopologyContext tc){
-                List<Integer> result = new ArrayList<Integer>();
-                Map<String, Map<String, Grouping>> streamComponentGroup = tc.getThisTargets();
-                Iterator<Entry<String, Map<String, Grouping>>> it = streamComponentGroup.entrySet().iterator();
-                while(it.hasNext()){
-                    Map.Entry<String, Map<String, Grouping>> pair = it.next();
-                    String streamId = pair.getKey();
-                    Map<String, Grouping> componentGroup = pair.getValue();
-                    if(streamId.equalsIgnoreCase("default")){
-                        Iterator<Entry<String, Grouping>> innerIt = componentGroup.entrySet().iterator();
-                        while(innerIt.hasNext()){
-                            Map.Entry<String, Grouping> innerPair = innerIt.next();
-                            String componentId = innerPair.getKey();
-                            //Grouping group = innerPair.getValue();
-                            //if (group.is_set_direct()){
-                            result.addAll(tc.getComponentTasks(componentId));
-                            //}
-                        }
-                    }
-                }
-                return result;
+            String outputTupleHash = MyUtilities.createHashString(tuple, hashIndexes, hashExpressions, conf);
+            Values values = new Values();
+            values.add(componentIndex);
+            values.add(tuple);
+            values.add(outputTupleHash);
+            for (Object o: tupleInfo)
+            	values.add(o);
+            return values;
+         }
+        
+        /*
+         * create general output declarer based on the paramaters in tupleInfoHeader
+         */
+        
+        public static List<String> createDeclarerOutputFields () {
+        	List<String> outputFields= new ArrayList<String>();
+			outputFields.add("CompIndex");
+			outputFields.add("Tuple");
+			outputFields.add("Hash");
+			for (String field: SystemParameters.tupleInfoHeader)
+				outputFields.add(field);
+			return outputFields;
         }
         
-        public static int chooseTargetIndex(String hash, int targetParallelism){
-            return Math.abs(hash.hashCode()) % targetParallelism;
+        public static String addMultiplicityToTupleString(String inputTupleString, Long multiplicity) {
+        	return inputTupleString + SystemParameters.MULTIPLICITY_HASH_DELIMITER + multiplicity; 
+        			
         }
+        
+        public static Long getMultiplicityFromTupleString(String inputTupleString) {
+        	String vals[] = inputTupleString.split(SystemParameters.MULTIPLICITY_HASH_DELIMITER);
+        	return Long.parseLong(vals[1]);
+        }
+        
+        
+        public static String getTupleString(String inputTupleString) {
+        	String vals[] = inputTupleString.split(SystemParameters.MULTIPLICITY_HASH_DELIMITER);
+        	return vals[0];
+        }
+        
+        public static InputDeclarer attachEmitterAllGrouping(Map map, InputDeclarer currentBolt,
+                StormEmitter emitter1, StormEmitter... emittersArray){
+            List<StormEmitter> emittersList = new ArrayList<StormEmitter>();
+            emittersList.add(emitter1);
+            emittersList.addAll(Arrays.asList(emittersArray));
 
-
-    public static int getCompBatchSize(String compName, Map map) {
-        return SystemParameters.getInt(map, compName + "_BS");
-    }
-
-    public static long getMin(long first, long second) {
-        return first<second ? first : second;
-    }
+            for(StormEmitter emitter: emittersList){
+                String[] emitterIDs = emitter.getEmitterIDs();
+                for(String emitterID: emitterIDs){
+                    currentBolt = currentBolt.allGrouping(emitterID);
+                }
+            }
+            return currentBolt;
+        }
+        
+        /*
+         * use the group by columns - moved by one - first one received is the agg key (group by columns)
+         */
+        
+        public static AggregationStorage createAggregationStorage(AggregateOperator agg, Map conf) {
+        	AggregateOperator newAggOp = agg.createInstance();
+        	if (agg.hasGroupBy()) {
+        		List<Integer> groupByColums = agg.getGroupByColumns();
+        		List<Integer> newGroupByColumns = new ArrayList<Integer>();
+        		for (Integer i : groupByColums)
+        			newGroupByColumns.add(i + 1);
+        		newAggOp.setGroupByColumns(newGroupByColumns);
+        	}
+        	AggregationStorage storage = new AggregationStorage(newAggOp, newAggOp.getType(), conf, agg.hasGroupBy() == false);
+        	return storage;
+        } 
         
 }
-

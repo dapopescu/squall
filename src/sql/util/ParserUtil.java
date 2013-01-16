@@ -650,14 +650,6 @@ public class ParserUtil {
         }
         return parallelismToMap(compNamePars, map);
     }
-    
-    public static void batchesToMap(NameCompGen cg, Map map) {
-        for(Component comp: cg.getQueryPlan().getPlan()){
-            String compName = comp.getName();
-            int batchSize = cg.getCostParameters(compName).getBatchSize();
-            SystemParameters.putInMap(map, compName + "_BS", batchSize);
-        }
-    }    
 
     public static int parallelismToMap(Map<String, Integer> compNamePars, Map map) {
         int totalParallelism = 0;
@@ -694,20 +686,8 @@ public class ParserUtil {
         sb.append("Total parallelism is ").append(totalParallelism).append("\n\n");
         return sb.toString();
     }
-    
-    //can be used *after* parallelismToMap method is invoked
-    public static int getTotalParallelism(QueryPlan plan, Map<String, String> map){
-        int totalParallelism = 0;
-        
-        for(String compName: plan.getComponentNames()){
-            String parallelismStr = SystemParameters.getString(map, compName +"_PAR");          
-            totalParallelism += Integer.valueOf(parallelismStr);
-        }
-        
-        return totalParallelism;
-    }
 
-    //can be used *before* parallelismToMap method is invoked
+    //can be used before parallelismToMap method is invoked
     public static int getTotalParallelism(NameCompGen ncg) {
         int totalParallelism = 0;
         Map<String, CostParams> compCost = ncg.getCompCost();

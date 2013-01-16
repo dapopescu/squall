@@ -19,7 +19,7 @@ public interface ReplacementAlgorithm<V> {
 	 * internal one for future references (if needed) */
 	public Object add(V obj);
 	
-	/* Removes and returns the least prefered element of the data
+	/* Removes and returns the least preferred element of the data
 	 * structure. If the object was encapsulated inside a larger object,
 	 * then the object is un-encapsulated and the internal object obj V is
 	 * returned. */
@@ -44,4 +44,6 @@ public interface ReplacementAlgorithm<V> {
 	 * doesn't necessarily have to perform cleanup of the objects of the
 	 * stores. */
 	public void reset();
+	
+	public V remove(Object obj);
 } 

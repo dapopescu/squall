@@ -91,5 +91,11 @@ public class ColumnReference<T extends Comparable<T>> implements ValueExpression
 		return false;
 	}
 
+	@Override
+	public T eval(List<String> tuple, Long tupleMultiplicity) {
+		String value = tuple.get(_columnIndex);
+        return _wrapper.fromString(value);
+	}
+
 
 }

@@ -1,5 +1,27 @@
 package plan_runner.storm_components;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Semaphore;
+
+import org.apache.log4j.Logger;
+
+import plan_runner.components.Component;
+import plan_runner.components.ComponentProperties;
+import plan_runner.conversion.TypeConversion;
+import plan_runner.expressions.ValueExpression;
+import plan_runner.operators.AggregateOperator;
+import plan_runner.operators.ChainOperator;
+import plan_runner.operators.Operator;
+import plan_runner.operators.ProjectOperator;
+import plan_runner.storage.AggregationStorage;
+import plan_runner.storage.BasicStore;
+import plan_runner.storage.KeyValueStore;
+import plan_runner.storm_components.synchronization.TopologyKiller;
+import plan_runner.utilities.MyUtilities;
+import plan_runner.utilities.PeriodicBatchSend;
+import plan_runner.utilities.SystemParameters;
 import backtype.storm.Config;
 import backtype.storm.task.OutputCollector;
 import backtype.storm.task.TopologyContext;
@@ -10,23 +32,6 @@ import backtype.storm.topology.base.BaseRichBolt;
 import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Tuple;
 import backtype.storm.tuple.Values;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Semaphore;
-import java.util.Collections;
-import org.apache.log4j.Logger;
-import plan_runner.components.ComponentProperties;
-import plan_runner.expressions.ValueExpression;
-import plan_runner.operators.AggregateOperator;
-import plan_runner.operators.ChainOperator;
-import plan_runner.operators.Operator;
-import plan_runner.operators.ProjectOperator;
-import plan_runner.storage.BasicStore;
-import plan_runner.storm_components.synchronization.TopologyKiller;
-import plan_runner.utilities.MyUtilities;
-import plan_runner.utilities.PeriodicBatchSend;
-import plan_runner.utilities.SystemParameters;
 
 public class StormDstJoin extends BaseRichBolt implements StormJoin, StormComponent {
 	private static final long serialVersionUID = 1L;
@@ -59,7 +64,7 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 	//for load-balancing
 	private List<String> _fullHashList;
 
-	//for No ACK: the total number of tasks of all the parent compoonents
+	//for No ACK: the total number of tasks of all the parent components
 	private int _numRemainingParents;
 
 	//for batch sending
@@ -67,18 +72,19 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 	private boolean _firstTime = true;
 	private PeriodicBatchSend _periodicBatch;
 	private long _batchOutputMillis;
-        
-        //for customTimestamp
-        private double _totalLatency;
-        private long _numberOfSamples;
-        
-        //for ManualBatch(Queuing) mode
-        private List<Integer> _targetTaskIds;
-        private int _targetParallelism;
-
-        private StringBuffer[] _targetBuffers;
-        private long[] _targetTimestamps;
-
+	
+	//keep current state for result of nested query
+	private AggregationStorage _firstNestedQueryStorage;
+	private AggregationStorage _secondNestedQueryStorage;
+	//keep pair tuple - current state for nested query
+	private KeyValueStore<String, String> _firstCorrespondenceStorage;
+	private KeyValueStore<String, String> _secondCorrespondenceStorage;
+	private boolean _isFirstEmitterNestedQuery = false;
+	private boolean _isSecondEmitterNestedQuery = false;
+	private boolean _firstNestedQueryHasGroupBy = false;
+	private boolean _secondNestedQueryHasGroupBy = false;
+	private BasicStore<ArrayList<List<String>>> _previousAggResult; 
+		
 	public StormDstJoin(StormEmitter firstEmitter,
 			StormEmitter secondEmitter,
 			ComponentProperties cp,
@@ -115,13 +121,47 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 		_hierarchyPosition = hierarchyPosition;
 
 		_fullHashList = cp.getFullHashList();
+		
+		_previousAggResult = new KeyValueStore<String, List<String>>(_conf);
+		
 		InputDeclarer currentBolt = builder.setBolt(_ID, this, parallelism);
-                
-                if(MyUtilities.isManualBatchingMode(_conf)){
-                    currentBolt = MyUtilities.attachEmitterBatch(conf, currentBolt, firstEmitter, secondEmitter);
-                }else{
-                    currentBolt = MyUtilities.attachEmitterCustom(conf, _fullHashList, currentBolt, firstEmitter, secondEmitter);
-                }
+		
+		////////////////////////// Change grouping and initialize necessary storages
+		Component[] parents = cp.getParents();
+		AggregateOperator aggOpFirstEmitter = parents[0].getChainOperator().getAggregation();
+		AggregateOperator aggOpSecondEmitter = parents[1].getChainOperator().getAggregation();
+		if (aggOpFirstEmitter != null) {
+			if (aggOpFirstEmitter.hasGroupBy()) {
+				currentBolt = MyUtilities.attachEmitterCustom(conf, null, currentBolt, firstEmitter, secondEmitter);
+				_firstNestedQueryHasGroupBy = true;
+			}
+			else {
+				currentBolt = MyUtilities.attachEmitterAllGrouping(conf, currentBolt, firstEmitter);
+				currentBolt = MyUtilities.attachEmitterCustom(conf, _fullHashList, currentBolt, secondEmitter);
+			}
+		
+			_firstNestedQueryStorage = MyUtilities.createAggregationStorage(parents[0].getChainOperator().getAggregation(), conf); 
+			_firstCorrespondenceStorage = new KeyValueStore<String, String>(_conf);
+			_isFirstEmitterNestedQuery = true;
+		}
+		else if (aggOpSecondEmitter != null) {
+			if (aggOpSecondEmitter.hasGroupBy()) {
+				currentBolt = MyUtilities.attachEmitterCustom(conf, null, currentBolt, firstEmitter, secondEmitter);
+				_secondNestedQueryHasGroupBy = true;
+			}
+			else {
+				currentBolt = MyUtilities.attachEmitterAllGrouping(conf, currentBolt, secondEmitter);
+				currentBolt = MyUtilities.attachEmitterCustom(conf, _fullHashList, currentBolt, firstEmitter);
+			}
+			
+			_secondNestedQueryStorage = MyUtilities.createAggregationStorage(parents[1].getChainOperator().getAggregation(), conf); 
+			_secondCorrespondenceStorage = new KeyValueStore<String, String>(_conf);
+			_isSecondEmitterNestedQuery = true;
+		}
+		else {
+			currentBolt = MyUtilities.attachEmitterCustom(conf, _fullHashList, currentBolt, firstEmitter, secondEmitter);
+		}
+		//////////////////////////////////////////
 
 		if( _hierarchyPosition == FINAL_COMPONENT && (!MyUtilities.isAckEveryTuple(conf))){
 			killer.registerComponent(this, parallelism);
@@ -137,7 +177,6 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 
 		_firstPreAggProj = firstPreAggProj;
 		_secondPreAggProj = secondPreAggProj;
-
 	}
 
 	@Override
@@ -151,159 +190,83 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 				MyUtilities.dumpSignal(this, stormTupleRcv, _collector);
 				return;
 			}
+			
+			String inputComponentIndex=stormTupleRcv.getString(0);
+			List<String> tuple = (List<String>) stormTupleRcv.getValue(1);
+			String inputTupleHash=stormTupleRcv.getString(2);
+			Long inputTupleMultiplicity = stormTupleRcv.getLongByField("Multiplicity");
+			String inputTupleString = MyUtilities.tupleToString(tuple, _conf);
+			
+			if(MyUtilities.isFinalAck(tuple, _conf)){
+				_numRemainingParents--;
+				MyUtilities.processFinalAck(_numRemainingParents, _hierarchyPosition, stormTupleRcv, _collector, _periodicBatch);
+				return;
+			}
 
-                        if(!MyUtilities.isManualBatchingMode(_conf)){
-                            String inputComponentIndex = stormTupleRcv.getString(0);
-                            List<String> tuple = (List<String>) stormTupleRcv.getValue(1);
-                            String inputTupleHash = stormTupleRcv.getString(2);
-
-                            if(processFinalAck(tuple, stormTupleRcv)){
-                                return;
-                            }
-                            
-                            processNonLastTuple(inputComponentIndex, tuple, inputTupleHash, stormTupleRcv, true);
-                            
-                        }else{
-                                String inputComponentIndex = stormTupleRcv.getString(0);
-                                String inputBatch = stormTupleRcv.getString(1);
-                                
-                                String[] wholeTuples = inputBatch.split(SystemParameters.MANUAL_BATCH_TUPLE_DELIMITER);
-                                int batchSize = wholeTuples.length;
-                                for(int i=0; i<batchSize; i++){
-                                    //parsing
-                                    String currentTuple = wholeTuples[i];
-                                    String[] parts = currentTuple.split(SystemParameters.MANUAL_BATCH_HASH_DELIMITER);
-                                    
-                                    String inputTupleHash = null;
-                                    String inputTupleString = null;
-                                    if(parts.length == 1){
-                                        //lastAck
-                                        inputTupleString = parts[0];
-                                    }else{
-                                        inputTupleHash = parts[0];
-                                        inputTupleString = parts[1];
-                                    }                                 
-                                    List<String> tuple = MyUtilities.stringToTuple(inputTupleString, _conf);
-
-                                    //final Ack check
-                                    if(processFinalAck(tuple, stormTupleRcv)){
-                                        if(i !=  batchSize -1){
-                                            throw new RuntimeException("Should not be here. LAST_ACK is not the last tuple!");
-                                        }
-                                        return;
-                                    }
-                                    
-                                    //processing a tuple
-                                    if( i == batchSize - 1){
-                                        processNonLastTuple(inputComponentIndex, tuple, inputTupleHash, stormTupleRcv, true);
-                                    }else{
-                                        processNonLastTuple(inputComponentIndex, tuple, inputTupleHash, stormTupleRcv, false);
-                                    }
-                                    
-                                }
-                        }
-
-			_collector.ack(stormTupleRcv);
-		}
-        
-                //if true, we should exit from method which called this method
-                private boolean processFinalAck(List<String> tuple, Tuple stormTupleRcv){
-                    if(MyUtilities.isFinalAck(tuple, _conf)){
-			_numRemainingParents--;
-                        if(_numRemainingParents == 0 && MyUtilities.isManualBatchingMode(_conf)){
-                            //flushing before sending lastAck down the hierarchy
-                            manualBatchSend();
-                        }
-			MyUtilities.processFinalAck(_numRemainingParents, 
-                                        _hierarchyPosition, 
-                                        _conf,
-                                        stormTupleRcv, 
-                                        _collector, 
-                                        _periodicBatch);
-                        return true;
-                    }
-                    return false;
-                }
-        
-                private void processNonLastTuple(String inputComponentIndex, 
-                        List<String> tuple, 
-                        String inputTupleHash,
-                        Tuple stormTupleRcv, boolean isLastInBatch){
-                  
-                        boolean isFromFirstEmitter = false;
+			boolean isFromFirstEmitter = false;
 			BasicStore<ArrayList<String>> affectedStorage, oppositeStorage;
+			AggregationStorage affectedNestedQueryStorage;
+			KeyValueStore<String, String> affectedCorrespondenceStorage;
 			ProjectOperator projPreAgg;
 			if(_firstEmitterIndex.equals(inputComponentIndex)){
 				//R update
 				isFromFirstEmitter = true;
 				affectedStorage = _firstSquallStorage;
 				oppositeStorage = _secondSquallStorage;
+				affectedNestedQueryStorage = _firstNestedQueryStorage;
+				affectedCorrespondenceStorage = _firstCorrespondenceStorage;
 				projPreAgg = _secondPreAggProj;
 			}else if(_secondEmitterIndex.equals(inputComponentIndex)){
 				//S update
 				isFromFirstEmitter = false;
 				affectedStorage = _secondSquallStorage;
 				oppositeStorage = _firstSquallStorage;
+				affectedNestedQueryStorage = _secondNestedQueryStorage;
+				affectedCorrespondenceStorage = _secondCorrespondenceStorage;
 				projPreAgg = _firstPreAggProj;
 			}else{
 				throw new RuntimeException("InputComponentName " + inputComponentIndex +
 						" doesn't match neither " + _firstEmitterIndex + " nor " + _secondEmitterIndex + ".");
 			}
-
-			//add the stormTuple to the specific storage
-                        String inputTupleString = MyUtilities.tupleToString(tuple, _conf);
-			affectedStorage.insert(inputTupleHash, inputTupleString);
-
+		
+			if (_isFirstEmitterNestedQuery && isFromFirstEmitter) {
+				tuple = addTupleToStorageNestedQuery(affectedStorage,
+						affectedNestedQueryStorage, 
+						affectedCorrespondenceStorage,
+						tuple, 
+						inputTupleString,
+						inputTupleMultiplicity,
+						inputTupleHash);
+				if (!_firstNestedQueryHasGroupBy)
+					inputTupleHash = tuple.get(tuple.size() - 1);
+			}
+			else if (_isSecondEmitterNestedQuery && !isFromFirstEmitter) {
+				tuple = addTupleToStorageNestedQuery(affectedStorage,
+						affectedNestedQueryStorage, 
+						affectedCorrespondenceStorage,
+						tuple, 
+						inputTupleString,
+						inputTupleMultiplicity,
+						inputTupleHash);
+				if (!_secondNestedQueryHasGroupBy)
+					inputTupleHash = tuple.get(tuple.size() - 1);
+				
+			}
+			else {
+				addTupleToStorage(affectedStorage, inputTupleHash, inputTupleString, inputTupleMultiplicity);
+			}
+			
 			performJoin(stormTupleRcv,
 					tuple,
 					inputTupleHash,
 					isFromFirstEmitter,
 					oppositeStorage,
-					projPreAgg, 
-                                        isLastInBatch);
-                } 
-        
+					projPreAgg);
+			
+			_collector.ack(stormTupleRcv);
+		}
 
-	protected void performJoin(Tuple stormTupleRcv,
-			List<String> tuple,
-			String inputTupleHash,
-			boolean isFromFirstEmitter,
-			BasicStore<ArrayList<String>> oppositeStorage,
-			ProjectOperator projPreAgg,
-                        boolean isLastInBatch){
-
-		List<String> oppositeStringTupleList = oppositeStorage.access(inputTupleHash);
-
-		if(oppositeStringTupleList!=null)
-			for (int i = 0; i < oppositeStringTupleList.size(); i++) {
-				String oppositeStringTuple= oppositeStringTupleList.get(i);
-				List<String> oppositeTuple= MyUtilities.stringToTuple(oppositeStringTuple, getComponentConfiguration());
-
-				List<String> firstTuple, secondTuple;
-				if(isFromFirstEmitter){
-					firstTuple = tuple;
-					secondTuple = oppositeTuple;
-				}else{
-					firstTuple = oppositeTuple;
-					secondTuple = tuple;
-				}
-
-				List<String> outputTuple;
-				if(oppositeStorage instanceof BasicStore){
-					outputTuple = MyUtilities.createOutputTuple(firstTuple, secondTuple, _rightHashIndexes);
-				}else{
-					outputTuple = MyUtilities.createOutputTuple(firstTuple, secondTuple);
-				}
-
-				if(projPreAgg != null){
-					outputTuple = projPreAgg.process(outputTuple);
-				}
-
-				applyOperatorsAndSend(stormTupleRcv, outputTuple, isLastInBatch);
-			}
-	}
-
-	protected void applyOperatorsAndSend(Tuple stormTupleRcv, List<String> tuple, boolean isLastInBatch){
+	protected void applyOperatorsAndSend(Tuple stormTupleRcv, List<String> tuple){
 		if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
 			try {
 				_semAgg.acquire();
@@ -321,94 +284,16 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 		printTuple(tuple);
 
 		if(MyUtilities.isSending(_hierarchyPosition, _batchOutputMillis)){
-                    if(MyUtilities.isCustomTimestampMode(_conf)){
-                        long timestamp;
-                        if(MyUtilities.isManualBatchingMode(_conf)){
-                            timestamp = stormTupleRcv.getLong(2);
-                        }else{
-                            timestamp = stormTupleRcv.getLong(3);
-                        }
-                        tupleSend(tuple, stormTupleRcv, timestamp);
-                    }else{
-                        tupleSend(tuple, stormTupleRcv, 0);
-                    }
-			
+			tupleSend(tuple, stormTupleRcv);
 		}
-                if(MyUtilities.isPrintLatency(_hierarchyPosition, _conf)){
-                    long timestamp;
-                    if(MyUtilities.isManualBatchingMode(_conf)){
-                        if(isLastInBatch){
-                            timestamp = stormTupleRcv.getLong(2);
-                            printTupleLatency(_numSentTuples - 1, timestamp);
-                        }
-                    }else{
-                        timestamp = stormTupleRcv.getLong(3);
-                        printTupleLatency(_numSentTuples - 1, timestamp);
-                    }
-                    
-                }
 	}
-        
-        @Override
-		public void tupleSend(List<String> tuple, Tuple stormTupleRcv, long timestamp) {                       
-                        if(!MyUtilities.isManualBatchingMode(_conf)){
-                                regularTupleSend(tuple, stormTupleRcv, timestamp);
-                        }else{   
-				//appending tuple if it is not lastAck
-                                addToManualBatch(tuple, timestamp);
-                                if(_numSentTuples % MyUtilities.getCompBatchSize(_ID, _conf) == 0){
-                                    manualBatchSend();
-                                }                        
-                        }
+
+	@Override
+		public void tupleSend(List<String> tuple, Tuple stormTupleRcv) {
+			Values stormTupleSnd = MyUtilities.createTupleValues(tuple, _componentIndex,
+					_hashIndexes, _hashExpressions, _conf);
+			MyUtilities.sendTuple(stormTupleSnd, stormTupleRcv, _collector, _conf);
 		}
-        
-                //non-ManualBatchMode
-                private void regularTupleSend(List<String> tuple, Tuple stormTupleRcv, long timestamp){
-                    Values stormTupleSnd = MyUtilities.createTupleValues(tuple, 
-                                timestamp,
-                                _componentIndex,
-				_hashIndexes, 
-                                _hashExpressions, 
-                                _conf);
-                    MyUtilities.sendTuple(stormTupleSnd, stormTupleRcv, _collector, _conf);
-                }
-        
-                //ManualBatchMode
-                private void addToManualBatch(List<String> tuple, long timestamp){
-                        String tupleHash = MyUtilities.createHashString(tuple, _hashIndexes, _hashExpressions, _conf);                        
-                        int dstIndex = MyUtilities.chooseTargetIndex(tupleHash, _targetParallelism);
-
-                        //we put in queueTuple based on tupleHash
-                        //the same hash is used in BatchStreamGrouping for deciding where a particular targetBuffer is to be sent
-                        String tupleString = MyUtilities.tupleToString(tuple, _conf);
-                        
-                        if(MyUtilities.isCustomTimestampMode(_conf)){
-                            if(_targetBuffers[dstIndex].length() == 0){
-                                //timestamp of the first tuple being added to a buffer is the timestamp of the buffer
-                                _targetTimestamps[dstIndex] = timestamp;
-                            }else{
-                                _targetTimestamps[dstIndex] = MyUtilities.getMin(timestamp, _targetTimestamps[dstIndex]);
-                            }
-                        }
-                        _targetBuffers[dstIndex].append(tupleHash).append(SystemParameters.MANUAL_BATCH_HASH_DELIMITER)
-                                .append(tupleString).append(SystemParameters.MANUAL_BATCH_TUPLE_DELIMITER);
-                }
-                
-                private void manualBatchSend(){
-                        for(int i=0; i<_targetParallelism; i++){
-                            String tupleString = _targetBuffers[i].toString();
-                            _targetBuffers[i] = new StringBuffer("");
-
-                            if(!tupleString.isEmpty()){
-                                //some buffers might be empty
-                                if(MyUtilities.isCustomTimestampMode(_conf)){
-                                    _collector.emit(new Values(_componentIndex, tupleString, _targetTimestamps[i]));
-                                }else{
-                                    _collector.emit(new Values(_componentIndex, tupleString));
-                                }
-                            }
-                        }
-                }
 
 	@Override
 		public void batchSend(){
@@ -424,15 +309,25 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 						AggregateOperator agg = (AggregateOperator) lastOperator;
 						List<String> tuples = agg.getContent();
 						if (tuples != null) {
-                                                        String columnDelimiter = MyUtilities.getColumnDelimiter(_conf);
+                            String columnDelimiter = MyUtilities.getColumnDelimiter(_conf);
 //							System.out.println("TUPLES: " + tuples + " - " + tuples.size());
 							for(String tuple: tuples){
+								String tupleHash = tuple.split(" = ")[0];
 								tuple = tuple.replaceAll(" = ", columnDelimiter);
 		//						System.out.println("BATCH SEND: tuple = " + tuple + " - (after processing: "+ MyUtilities.stringToTuple(tuple, _conf) + ")");
 //								System.out.println("tuple = " + tuple + "/"+ MyUtilities.stringToTuple(tuple, _conf));
 //								List<String> tupleSend = MyUtilities.stringToTuple(tuple, _conf);
 //								Collections.reverse(tupleSend);
-								tupleSend(MyUtilities.stringToTuple(tuple, _conf), null, 0);
+								if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null){
+									ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
+									if (values != null) {
+										List<String> previousAggResult = values.get(0);
+										tupleSend(previousAggResult, null, -1L);	
+										_previousAggResult.update(tupleHash, previousAggResult, MyUtilities.stringToTuple(tuple, _conf));
+									}
+									else _previousAggResult.insert(tupleHash, MyUtilities.stringToTuple(tuple, _conf));
+								} 
+								tupleSend(MyUtilities.stringToTuple(tuple, _conf), null, 1L);
 							}
 						}
 
@@ -460,67 +355,19 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 		public void prepare(Map map, TopologyContext tc, OutputCollector collector) {
 			_collector=collector;
 			_numRemainingParents = MyUtilities.getNumParentTasks(tc, _firstEmitter, _secondEmitter);
-                        
-                        _targetTaskIds = MyUtilities.findTargetTaskIds(tc);
-                        _targetParallelism = _targetTaskIds.size();
-                        _targetBuffers = new StringBuffer[_targetParallelism];
-                        _targetTimestamps = new long[_targetParallelism];
-                        for(int i=0; i<_targetParallelism; i++){
-                            _targetBuffers[i] = new StringBuffer("");
-                        }
 		}
 
 	@Override
 		public void declareOutputFields(OutputFieldsDeclarer declarer) {
-			if(_hierarchyPosition == FINAL_COMPONENT){ // then its an intermediate stage not the final one
-                            if(!MyUtilities.isAckEveryTuple(_conf)){
-					declarer.declareStream(SystemParameters.EOF_STREAM, new Fields(SystemParameters.EOF));
-                            }
+			if(_hierarchyPosition!=FINAL_COMPONENT){ // then its an intermediate stage not the final one
+				declarer.declareStream(SystemParameters.DATA_STREAM, new Fields(MyUtilities.createDeclarerOutputFields ()));
+			
 			}else{
-                            List<String> outputFields= new ArrayList<String>();
-                            if(MyUtilities.isManualBatchingMode(_conf)){
-                                outputFields.add("CompIndex");
-                                outputFields.add("Tuple"); // string
-                            }else{
-                                outputFields.add("CompIndex");
-                                outputFields.add("Tuple"); // list of string
-                                outputFields.add("Hash");
-                            }
-                            if(MyUtilities.isCustomTimestampMode(_conf)){
-                                outputFields.add("Timestamp");
-                            }
-			declarer.declareStream(SystemParameters.DATA_STREAM, new Fields(outputFields));
+				if(!MyUtilities.isAckEveryTuple(_conf)){
+					declarer.declareStream(SystemParameters.EOF_STREAM, new Fields(SystemParameters.EOF));
+				}
 			}
 		}
-        
-        @Override
-        public void printTupleLatency(long tupleSerialNum, long timestamp) {
-            int freqCompute = SystemParameters.getInt(_conf, "FREQ_TUPLE_LOG_COMPUTE");
-            int freqWrite = SystemParameters.getInt(_conf, "FREQ_TUPLE_LOG_WRITE");
-            int startupIgnoredTuples = SystemParameters.getInt(_conf, "INIT_IGNORED_TUPLES");
-            
-            if(tupleSerialNum >= startupIgnoredTuples){
-                tupleSerialNum = tupleSerialNum - startupIgnoredTuples; // start counting from zero when computing starts
-                if(tupleSerialNum % freqCompute == 0){
-                    long latency = System.currentTimeMillis() - timestamp;
-                    if(latency < 0){
-                        LOG.info("Exception! Current latency is " + latency + "ms! Ignoring a tuple!");
-                        return;
-                    }
-                    if(_numberOfSamples < 0){
-                        LOG.info("Exception! Number of samples is " + _numberOfSamples + "! Ignoring a tuple!");
-                        return;
-                    }
-                    _totalLatency += latency;
-                    _numberOfSamples++;
-                }
-                if(tupleSerialNum % freqWrite == 0){
-                    LOG.info("Taking into account every " + freqCompute + "th tuple, and printing every " + freqWrite + "th one.");
-                    LOG.info("AVERAGE tuple latency so far is " + _totalLatency/_numberOfSamples);
-                }
-            }
-        } 
-        
 
 	@Override
 		public void printTuple(List<String> tuple){
@@ -584,5 +431,204 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 			String str = "DestinationStorage " + _ID + " has ID: " + _ID;
 			return str;
 		}
+	
+	protected void performJoin(Tuple stormTupleRcv,
+			List<String> tuple,
+			String inputTupleHash,
+			boolean isFromFirstEmitter,
+			BasicStore<ArrayList<String>> oppositeStorage,
+			ProjectOperator projPreAgg){
+
+		Long tupleMultiplicity = stormTupleRcv.getLongByField("Multiplicity");
+		List<String> oppositeStringTupleList = oppositeStorage.access(inputTupleHash);
+	
+		if(oppositeStringTupleList!=null)
+			for (int i = 0; i < oppositeStringTupleList.size(); i++) {
+				String oppositeStringTuple= oppositeStringTupleList.get(i);
+				Long oppositeTupleMultiplicity = MyUtilities.getMultiplicityFromTupleString(oppositeStringTuple);
+				oppositeStringTuple = MyUtilities.getTupleString(oppositeStringTuple);
+				List<String> oppositeTuple= MyUtilities.stringToTuple(oppositeStringTuple, getComponentConfiguration());
+				
+				List<String> firstTuple, secondTuple;
+				if(isFromFirstEmitter){
+					firstTuple = tuple;
+					secondTuple = oppositeTuple;
+				}else{
+					firstTuple = oppositeTuple;
+					secondTuple = tuple;
+				}
+
+				List<String> outputTuple;
+				if(oppositeStorage instanceof BasicStore){
+					outputTuple = MyUtilities.createOutputTuple(firstTuple, secondTuple, _rightHashIndexes);
+				}else{
+					outputTuple = MyUtilities.createOutputTuple(firstTuple, secondTuple);
+				}
+
+				if(projPreAgg != null){
+					outputTuple = projPreAgg.process(outputTuple);
+				}
+				
+				//multiplicity for output tuple
+				Long multiplicityForOutputTuple = tupleMultiplicity * oppositeTupleMultiplicity;
+				
+				applyOperatorsAndSend(stormTupleRcv, outputTuple, multiplicityForOutputTuple);					
+			}
+	}
+			
+		
+	protected void applyOperatorsAndSend(Tuple stormTupleRcv, List<String> tuple, Object... tupleInfo){
+		if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
+			try {
+				_semAgg.acquire();
+			} catch (InterruptedException ex) {}
+		}
+		
+		tuple = _operatorChain.process(tuple, tupleInfo);
+
+		if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
+			_semAgg.release();
+		}
+
+		if(tuple == null){
+			return;
+		}
+
+		_numSentTuples++;
+		printTuple(tuple);
+	        
+		
+		if(MyUtilities.isSending(_hierarchyPosition, _batchOutputMillis)){
+			//sending previous agg result
+			if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null) {
+        		String tupleHash = MyUtilities.tupleToString(tuple.subList(0, tuple.size() - 1), _conf);
+    			ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
+    			if (values != null) {
+    				List<String> previousAggResult = values.get(0);
+    				tupleSend(previousAggResult, null, -1L);
+    				_previousAggResult.update(tupleHash, previousAggResult, tuple);
+    			}
+    			else _previousAggResult.insert(tupleHash, tuple);
+        	}
+        		
+			if (_operatorChain.getAggregation() != null || _operatorChain.getDistinct() != null)
+				tupleInfo[0] = 1L;
+			tupleSend(tuple, stormTupleRcv, tupleInfo);
+		}
+	}
+
+	@Override
+		public void tupleSend(List<String> tuple, Tuple stormTupleRcv, Object... tupleInfo) {
+			Values stormTupleSnd = MyUtilities.createTupleValues(tuple, _componentIndex,
+					_hashIndexes, _hashExpressions, _conf, tupleInfo);
+			MyUtilities.sendTuple(stormTupleSnd, stormTupleRcv, _collector, _conf);
+		}
+	
+	/*
+	 * used in nested queries only
+	 */
+	
+	private List<String> addTupleToStorageNestedQuery(BasicStore<ArrayList<String>> affectedStorage,
+			AggregationStorage affectedNestedQueryStorage,
+			KeyValueStore<String, String> affectedCorrespondenceStorage,
+			List<String> tuple,
+			String inputTupleString,
+			Long inputTupleMultiplicity,
+			String inputTupleHash) {
+
+		String inputTupleAggHash = MyUtilities.tupleToString(tuple.subList(0, tuple.size() - 1), _conf);
+		//add received value to current state
+		affectedNestedQueryStorage.update(tuple, inputTupleAggHash, inputTupleMultiplicity);
+		TypeConversion typeStorage = affectedNestedQueryStorage.getType();
+		ArrayList tuplesFromStorage = affectedNestedQueryStorage.access(inputTupleAggHash);
+		List<String> newTuple = new ArrayList<String>(tuple);
+		
+		if (tuplesFromStorage != null) {
+			if (inputTupleMultiplicity > 0) {
+				String currentAggValue = typeStorage.toString(tuplesFromStorage.get(0)); 
+				affectedCorrespondenceStorage.insert(inputTupleString, currentAggValue);
+				//modify tuple with current value for join
+				newTuple.set(newTuple.size() - 1, currentAggValue);
+				//add the new value to affected storage
+				affectedStorage.remove(inputTupleHash);
+				String tupleString = MyUtilities.tupleToString(newTuple, _conf);
+				tupleString = MyUtilities.addMultiplicityToTupleString(tupleString, inputTupleMultiplicity);//mult == 1
+				affectedStorage.insert(inputTupleHash,  tupleString);
+			}
+			else {
+				ArrayList<String> values = affectedCorrespondenceStorage.access(inputTupleString);
+				if (values == null)
+					throw new RuntimeException("We should have a correspondence for this tuple " + inputTupleString);
+				String removedValue = values.get(0);
+				affectedCorrespondenceStorage.remove(inputTupleString, removedValue);
+				//we need to modify the tuple for join
+				newTuple.set(newTuple.size() - 1, removedValue);
+				affectedStorage.remove(inputTupleHash);
+			} 	
+		}
+		
+		return newTuple;
+	}
+	
+	/*
+	 * add the newly arrive tuple to storage taking into account its multiplicity value
+	 */
+	
+	private void addTupleToStorage(BasicStore<ArrayList<String>> affectedStorage,
+			String inputTupleHash, String inputTupleString, Long inputTupleMultiplicity) {
+			
+		//add tuple to storage only if its multiplicity is positive
+		if (inputTupleMultiplicity > 0)
+		{
+			ArrayList<String> tuplesFromStorage = affectedStorage.access(inputTupleHash);
+			boolean found = false;
+			if (tuplesFromStorage != null) {
+				for (String tuple : tuplesFromStorage) {
+					Long multiplicityForTupleFromStorage = MyUtilities.getMultiplicityFromTupleString(tuple);
+					String tupleStringForTupleFromStorage = MyUtilities.getTupleString(tuple);
+					
+					if (tupleStringForTupleFromStorage.equals(inputTupleString)) {
+						tupleStringForTupleFromStorage = MyUtilities.addMultiplicityToTupleString(tupleStringForTupleFromStorage,
+								multiplicityForTupleFromStorage + inputTupleMultiplicity);
+						affectedStorage.update(inputTupleHash, tuple, tupleStringForTupleFromStorage);
+						found = true;
+						break;
+					}
+				}
+				if (!found){
+					inputTupleString = MyUtilities.addMultiplicityToTupleString(inputTupleString, inputTupleMultiplicity);
+					affectedStorage.insert(inputTupleHash, inputTupleString);
+				}
+			}
+			else {
+				inputTupleString = MyUtilities.addMultiplicityToTupleString(inputTupleString, inputTupleMultiplicity);
+				affectedStorage.insert(inputTupleHash, inputTupleString);
+				
+			}
+		} 
+		else {
+			ArrayList<String> tuplesFromStorage = affectedStorage.access(inputTupleHash);
+			if (tuplesFromStorage != null) {
+				for (String tuple : tuplesFromStorage) {
+					Long multiplicityForTupleFromStorage = MyUtilities.getMultiplicityFromTupleString(tuple);
+					String tupleStringForTupleFromStorage = MyUtilities.getTupleString(tuple);
+					
+					if (tupleStringForTupleFromStorage.equals(inputTupleString)) {
+						if (Math.abs(inputTupleMultiplicity) == multiplicityForTupleFromStorage) 
+							affectedStorage.remove(inputTupleHash, tuple);
+						else if (Math.abs(inputTupleMultiplicity) < multiplicityForTupleFromStorage) {
+								tupleStringForTupleFromStorage = MyUtilities.addMultiplicityToTupleString(tupleStringForTupleFromStorage,
+									multiplicityForTupleFromStorage + inputTupleMultiplicity);
+								affectedStorage.update(inputTupleHash, tuple, tupleStringForTupleFromStorage);
+							}
+							else 
+								throw new RuntimeException("Received negative multiplicity for " +
+									"tuple larger than the positive one in the storage!!!");
+						break;
+					}
+				}		
+			}
+		}
+	}
 
 }

@@ -85,4 +85,9 @@ public class ValueSpecification<T extends Comparable<T>> implements ValueExpress
 	}
         return false;		
     }
+
+	@Override
+	public T eval(List<String> tuple, Long tupleMultiplicity) {
+		return _constant;
+	}
 }

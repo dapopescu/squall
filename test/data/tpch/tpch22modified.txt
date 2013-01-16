@@ -1,0 +1,8 @@
+select substring(c_phone from 1 for 2) as cntrycode, sum(c_acctbal) from customer, orders where c_acctbal > (select substring(c_phone from 1 for 2) as cntcode avg(c_acctbal) from customer where c_acctbal > 0.00 group by cntcode) and  o_custkey = c_custkey group by cntrycode
+
+select substring(c_phone from 1 for 2) as cntrycode, sum(c_acctbal) from CUSTOMER, ORDERS where c_acctbal > (select substring(c_phone from 1 for 2) as cntcode, avg(c_acctbal) from CUSTOMER where c_acctbal > 0.00 and cntcode=cntrycode) and  o_custkey = c_custkey group by cntrycode;
+
+
+select substring(a.c_phone from 1 for 2) as cntrycode, sum(a.c_acctbal) from CUSTOMER a, ORDERS where c_acctbal > (select avg(c_acctbal) from CUSTOMER where c_acctbal > 0.00 and substring(c_phone from 1 for 2)=substring(a.c_phone from 1 for 2)) and  o_custkey = c_custkey group by cntrycode;
+
+(select substring(c_phone from 1 for 2), avg(c_acctbal) from CUSTOMER where c_acctbal > 0.00 group by substring(c_phone from 1 for 2)

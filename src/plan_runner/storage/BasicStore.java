@@ -56,6 +56,8 @@ public abstract class BasicStore<R> implements Serializable {
 	public abstract R update(Object... data);
 	public abstract boolean contains(Object... data);
 	public abstract R access(Object... data);
+	public abstract Object remove(Object... data);
+	
 	/* must set _objRemId */
 	public abstract Object onRemove();
 	public abstract void reset();

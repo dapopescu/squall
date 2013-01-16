@@ -12,10 +12,13 @@ import backtype.storm.tuple.Tuple;
 import backtype.storm.tuple.Values;
 import gnu.trove.list.array.TIntArrayList;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
 import org.apache.log4j.Logger;
+
+import plan_runner.components.Component;
 import plan_runner.components.ComponentProperties;
 import plan_runner.expressions.ValueExpression;
 import plan_runner.operators.AggregateOperator;
@@ -23,7 +26,10 @@ import plan_runner.operators.ChainOperator;
 import plan_runner.operators.Operator;
 import plan_runner.predicates.ComparisonPredicate;
 import plan_runner.predicates.Predicate;
+import plan_runner.storage.AggregationStorage;
+import plan_runner.storage.BasicStore;
 import plan_runner.storage.TupleStorage;
+import plan_runner.storage.TupleStore;
 import plan_runner.storm_components.synchronization.TopologyKiller;
 import plan_runner.thetajoin.indexes.Index;
 import plan_runner.thetajoin.matrix_mapping.Matrix;
@@ -35,6 +41,10 @@ import plan_runner.utilities.SystemParameters;
 import plan_runner.visitors.PredicateCreateIndexesVisitor;
 import plan_runner.visitors.PredicateUpdateIndexesVisitor;
 
+//TODO: the current implementation does not produce the correct results for hyrackstheta
+//possibly from the changes in the tuple store and indexes necessary for deleting tuples 
+//from storage
+
 public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComponent {
 	private static final long serialVersionUID = 1L;
 	private static Logger LOG = Logger.getLogger(StormThetaJoin.class);
@@ -42,7 +52,7 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 	private int _hierarchyPosition=INTERMEDIATE;
 
 	private StormEmitter _firstEmitter, _secondEmitter;
-	private TupleStorage _firstRelationStorage, _secondRelationStorage;
+	private TupleStore _firstRelationStorage, _secondRelationStorage;
 	
 	private String _ID;
         private String _componentIndex; //a unique index in a list of all the components
@@ -82,9 +92,18 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 	private boolean _firstTime = true;
 	private PeriodicBatchSend _periodicBatch;
 	private long _batchOutputMillis;
-        
-        //for Send and Wait mode
-        private double _totalLatency;        
+	
+	//keep current state for result of nested query
+	private AggregationStorage _firstNestedQueryStorage;
+	private AggregationStorage _secondNestedQueryStorage;
+	//keep pair tuple - current state for nested query
+	private HashMap<String, ArrayList<String>> _firstCorrespondenceStorage;
+	private HashMap<String, ArrayList<String>> _secondCorrespondenceStorage;
+	private boolean _isFirstEmitterNestedQuery = false;
+	private boolean _isSecondEmitterNestedQuery = false;
+	private boolean _firstRemove = true;
+	private BasicStore<ArrayList<List<String>>> _previousAggResult;
+	
 
 	public StormThetaJoin(StormEmitter firstEmitter,
 			StormEmitter secondEmitter,
@@ -99,11 +118,11 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 		_firstEmitter = firstEmitter;
 		_secondEmitter = secondEmitter;
 		_ID = cp.getName();
-                _componentIndex = String.valueOf(allCompNames.indexOf(_ID));
+        _componentIndex = String.valueOf(allCompNames.indexOf(_ID));
 		_batchOutputMillis = cp.getBatchOutputMillis();
 		
-                _firstEmitterIndex = String.valueOf(allCompNames.indexOf(_firstEmitter.getName()));
-                _secondEmitterIndex = String.valueOf(allCompNames.indexOf(_secondEmitter.getName()));
+        _firstEmitterIndex = String.valueOf(allCompNames.indexOf(_firstEmitter.getName()));
+        _secondEmitterIndex = String.valueOf(allCompNames.indexOf(_secondEmitter.getName()));
 
 		int firstCardinality=SystemParameters.getInt(conf, firstEmitter.getName()+"_CARD");
 		int secondCardinality=SystemParameters.getInt(conf, secondEmitter.getName()+"_CARD");
@@ -138,8 +157,8 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 			currentBolt.allGrouping(killer.getID(), SystemParameters.DUMP_RESULTS_STREAM);
 		}
 
-		_firstRelationStorage = new TupleStorage();
-		_secondRelationStorage = new TupleStorage();
+		_firstRelationStorage = new TupleStore();
+		_secondRelationStorage = new TupleStore();
 
 
 		if(_joinPredicate != null){
@@ -188,24 +207,20 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 		}
 
 		String inputComponentIndex=stormTupleRcv.getString(0);
-                List<String> tuple = (List<String>)stormTupleRcv.getValue(1);
+        List<String> tuple = (List<String>)stormTupleRcv.getValue(1);
 		String inputTupleString=MyUtilities.tupleToString(tuple, _conf);
 		String inputTupleHash=stormTupleRcv.getString(2);
+		Long inputTupleMultiplicity = stormTupleRcv.getLongByField("Multiplicity");
 
 		if(MyUtilities.isFinalAck(tuple, _conf)){
 			_numRemainingParents--;
-			MyUtilities.processFinalAck(_numRemainingParents, 
-                                _hierarchyPosition, 
-                                _conf,
-                                stormTupleRcv, 
-                                _collector, 
-                                _periodicBatch);
+			MyUtilities.processFinalAck(_numRemainingParents, _hierarchyPosition, stormTupleRcv, _collector, _periodicBatch);
 			return;
 		}
 
 		boolean isFromFirstEmitter = false;
 		
-		TupleStorage affectedStorage, oppositeStorage;
+		TupleStore affectedStorage, oppositeStorage;
 		List<Index> affectedIndexes, oppositeIndexes;
 		
 		if(_firstEmitterIndex.equals(inputComponentIndex)){
@@ -228,8 +243,10 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 		}
 
 		//add the stormTuple to the specific storage
-		int row_id = affectedStorage.insert(inputTupleString);
+		//int row_id = affectedStorage.insert(inputTupleString);
 
+		int row_id = affectedStorage.insert(inputTupleString, inputTupleMultiplicity);
+		//System.out.println(affectedStorage.getLastId());
 		List<String> valuesToApplyOnIndex = null;
 		
 		if(_existIndexes){
@@ -252,6 +269,7 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 		String inputComponentIndex = stormTupleRcv.getString(0); // Table name
 		List<String> tuple = (List<String>) stormTupleRcv.getValue(1); //INPUT TUPLE
 		// Get a list of tuple attributes and the key value
+		Long tupleMultiplicity = stormTupleRcv.getLongByField("Multiplicity");
 		
 		boolean comeFromFirstEmitter;
 		
@@ -266,7 +284,7 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 
 		List<String> valuesToIndex = new ArrayList<String>(visitor._valuesToIndex);
 		List<Object> typesOfValuesToIndex = new ArrayList<Object>(visitor._typesOfValuesToIndex);
-		
+		if (row_id >= 0)
 		for(int i=0; i<affectedIndexes.size(); i++){
 			if(typesOfValuesToIndex.get(i) instanceof Integer ){
 				affectedIndexes.get(i).put(Integer.parseInt(valuesToIndex.get(i)), row_id);
@@ -278,6 +296,19 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 				throw new RuntimeException("non supported type");
 			}
 			
+		}
+		else {
+			for(int i=0; i<affectedIndexes.size(); i++){
+				if(typesOfValuesToIndex.get(i) instanceof Integer ){
+					affectedIndexes.get(i).remove(Integer.parseInt(valuesToIndex.get(i)), -row_id + 1);
+				}else if(typesOfValuesToIndex.get(i) instanceof Double ){
+					affectedIndexes.get(i).remove(Double.parseDouble(valuesToIndex.get(i)), -row_id + 1);
+				}else if(typesOfValuesToIndex.get(i) instanceof String){
+					affectedIndexes.get(i).remove(valuesToIndex.get(i), -row_id + 1);
+				}else{
+					throw new RuntimeException("non supported type");
+				}
+			}
 		}
 		
 		return valuesToIndex;
@@ -291,16 +322,16 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 			boolean isFromFirstEmitter,
 			List<Index> oppositeIndexes,
 			List<String> valuesToApplyOnIndex,
-			TupleStorage oppositeStorage){
+			TupleStore oppositeStorage){
 
-		TupleStorage tuplesToJoin = new TupleStorage();
+		TupleStore tuplesToJoin = new TupleStore();
 		selectTupleToJoin(oppositeStorage, oppositeIndexes, isFromFirstEmitter, valuesToApplyOnIndex, tuplesToJoin);
 		join(stormTupleRcv, tuple, isFromFirstEmitter, tuplesToJoin);
 	}
 	
-	private void selectTupleToJoin(TupleStorage oppositeStorage,
+	private void selectTupleToJoin(TupleStore oppositeStorage,
 			List<Index> oppositeIndexes, boolean isFromFirstEmitter,
-			List<String> valuesToApplyOnIndex, TupleStorage tuplesToJoin){
+			List<String> valuesToApplyOnIndex, TupleStore tuplesToJoin){
 				
 		if(!_existIndexes ){
 			tuplesToJoin.copy(oppositeStorage);
@@ -377,16 +408,16 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 		//generate tuplestorage
 		for(int i = 0; i < rowIds.size(); i++){
 			int id = rowIds.get(i);
-			tuplesToJoin.insert(oppositeStorage.get(id));
-			
+			//tuplesToJoin.insert(oppositeStorage.get(id));
+			tuplesToJoin.insert(oppositeStorage.get(id), oppositeStorage.getMultiplicity(id));
 		}
-		
+		//System.out.println(tuplesToJoin + " " + tuplesToJoin.toStringMultiplicity());
 	}
 	
 	private void join(Tuple stormTuple, 
             List<String> tuple,
             boolean isFromFirstEmitter,
-            TupleStorage oppositeStorage){
+            TupleStore oppositeStorage){
 		
 		if (oppositeStorage == null || oppositeStorage.size() == 0) {
 			return;
@@ -394,6 +425,8 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
  
 		for (int i=0; i<oppositeStorage.size(); i++) {
 			String oppositeTupleString = oppositeStorage.get(i);
+			Long oppositeTupleMultiplicity = oppositeStorage.getMultiplicity(i);
+			//System.out.println(oppositeTupleMultiplicity);
 			
 			List<String> oppositeTuple= MyUtilities.stringToTuple(oppositeTupleString, getComponentConfiguration());
 			List<String> firstTuple, secondTuple;
@@ -417,8 +450,9 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 				// Cartesian product - Outputs all attributes
 				outputTuple = MyUtilities.createOutputTuple(firstTuple, secondTuple);
 				
-
-				applyOperatorsAndSend(stormTuple, outputTuple);
+				Long inputTupleMultiplicity = stormTuple.getLongByField("Multiplicity");
+				Long multiplicityForOutputTuple = inputTupleMultiplicity * oppositeTupleMultiplicity;
+				applyOperatorsAndSend(stormTuple, outputTuple, multiplicityForOutputTuple);
 
 			}
 		}	
@@ -443,25 +477,14 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 		printTuple(tuple);
 
 		if(MyUtilities.isSending(_hierarchyPosition, _batchOutputMillis)){
-                    if(MyUtilities.isCustomTimestampMode(_conf)){
-                        tupleSend(tuple, stormTupleRcv, stormTupleRcv.getLong(3));
-                    }else{
-                        tupleSend(tuple, stormTupleRcv, 0);
-                    }
+			tupleSend(tuple, stormTupleRcv);
 		}
-                if(MyUtilities.isPrintLatency(_hierarchyPosition, _conf)){
-                    printTupleLatency(_numSentTuples - 1, stormTupleRcv.getLong(3));
-                }
 	}
 
 	@Override
-		public void tupleSend(List<String> tuple, Tuple stormTupleRcv, long timestamp) {
-			Values stormTupleSnd = MyUtilities.createTupleValues(tuple, 
-                                timestamp,
-                                _componentIndex,
-				_hashIndexes, 
-                                _hashExpressions, 
-                                _conf);
+		public void tupleSend(List<String> tuple, Tuple stormTupleRcv) {
+			Values stormTupleSnd = MyUtilities.createTupleValues(tuple, _componentIndex,
+					_hashIndexes, _hashExpressions, _conf);
 			MyUtilities.sendTuple(stormTupleSnd, stormTupleRcv, _collector, _conf);
 		}
 
@@ -475,11 +498,12 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 							_semAgg.acquire();
 						} catch (InterruptedException ex) {}
 
+						//TODO: add sending of previous agg result
 						//sending
 						AggregateOperator agg = (AggregateOperator) lastOperator;
 						List<String> tuples = agg.getContent();
 						for(String tuple: tuples){
-							tupleSend(MyUtilities.stringToTuple(tuple, _conf), null, 0);
+							tupleSend(MyUtilities.stringToTuple(tuple, _conf), null, 1L);
 						}
 
 						//clearing
@@ -512,37 +536,13 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 	@Override
 		public void declareOutputFields(OutputFieldsDeclarer declarer) {
 			if(_hierarchyPosition!=FINAL_COMPONENT){ // then its an intermediate stage not the final one
-                            if(MyUtilities.isCustomTimestampMode(_conf)){
-                                declarer.declareStream(SystemParameters.DATA_STREAM, new Fields("CompIndex", "Tuple", "Hash", "Timestamp"));
-                            }else{
-                                declarer.declareStream(SystemParameters.DATA_STREAM, new Fields("CompIndex", "Tuple", "Hash"));
-                            }
+				declarer.declareStream(SystemParameters.DATA_STREAM, new Fields(MyUtilities.createDeclarerOutputFields ()));
 			}else{
 				if(!MyUtilities.isAckEveryTuple(_conf)){
 					declarer.declareStream(SystemParameters.EOF_STREAM, new Fields(SystemParameters.EOF));
 				}
 			}
 		}
-        
-        @Override
-        public void printTupleLatency(long tupleSerialNum, long timestamp) {
-            int freqCompute = SystemParameters.getInt(_conf, "FREQ_TUPLE_LOG_COMPUTE");
-            int freqWrite = SystemParameters.getInt(_conf, "FREQ_TUPLE_LOG_WRITE");
-            int startupIgnoredTuples = SystemParameters.getInt(_conf, "INIT_IGNORED_TUPLES");
-            
-            if(tupleSerialNum >= startupIgnoredTuples){
-                tupleSerialNum = tupleSerialNum - startupIgnoredTuples; // start counting from zero when computing starts
-                if(tupleSerialNum % freqCompute == 0){
-                    long latency = System.currentTimeMillis() - timestamp;
-                    _totalLatency += latency;
-                }
-                if(tupleSerialNum % freqWrite == 0){
-                    long numberOfSamples = (tupleSerialNum / freqCompute) + 1; // note that it is divisible
-                    LOG.info("Taking into account every " + freqCompute + "th tuple, and printing every " + freqWrite + "th one.");
-                    LOG.info("AVERAGE tuple latency so far is " + _totalLatency/numberOfSamples);
-                }
-            }
-        }  
 
 	@Override
 		public void printTuple(List<String> tuple){
@@ -606,5 +606,54 @@ public class StormThetaJoin extends BaseRichBolt implements StormJoin, StormComp
 			String str = "DestinationStorage " + _ID + " has ID: " + _ID;
 			return str;
 		}
+
+	@Override
+	public void tupleSend(List<String> tuple, Tuple stormTupleRcv,
+			Object... tupleInfo) {
+		Values stormTupleSnd = MyUtilities.createTupleValues(tuple, _componentIndex,
+				_hashIndexes, _hashExpressions, _conf, tupleInfo);
+		MyUtilities.sendTuple(stormTupleSnd, stormTupleRcv, _collector, _conf);
+		
+	}
+	
+	protected void applyOperatorsAndSend(Tuple stormTupleRcv, List<String> tuple, Object... tupleInfo){
+		if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
+			try {
+				_semAgg.acquire();
+			} catch (InterruptedException ex) {}
+		}
+	
+		tuple = _operatorChain.process(tuple, tupleInfo);
+		
+		if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
+			_semAgg.release();
+		}
+
+		if(tuple == null){
+			return;
+		}
+	
+		_numSentTuples++;
+		printTuple(tuple);
+
+		if(MyUtilities.isSending(_hierarchyPosition, _batchOutputMillis)){
+        	if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null) {
+        		String tupleHash = MyUtilities.tupleToString(tuple.subList(0, tuple.size() - 1), _conf);
+    			ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
+    			if (values != null) {
+    				List<String> previousAggResult = values.get(0);
+    				tupleSend(previousAggResult, null, -1L);
+    				_previousAggResult.update(tupleHash, previousAggResult, tuple);
+    			}
+    			else _previousAggResult.insert(tupleHash, tuple);
+        	}
+        		
+			if (_operatorChain.getAggregation() != null || _operatorChain.getDistinct() != null)
+				tupleInfo[0] = 1L;
+			tupleSend(tuple, stormTupleRcv, tupleInfo);
+		}
+	}
+
+	
 
 }

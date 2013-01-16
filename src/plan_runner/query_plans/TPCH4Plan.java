@@ -56,25 +56,6 @@ public class TPCH4Plan {
         computeDates();
 
         //-------------------------------------------------------------------------------------
-        List<Integer> hashLineitem = Arrays.asList(0);
-
-        SelectOperator selectionLineitem = new SelectOperator(
-                new ComparisonPredicate(
-                    ComparisonPredicate.LESS_OP,
-                    new ColumnReference(_dc, 11),
-                    new ColumnReference(_dc, 12)
-                ));
-        
-        ProjectOperator projectionLineitem = new ProjectOperator(new int[]{0});
-
-        DataSourceComponent relationLineitem = new DataSourceComponent(
-                "LINEITEM",
-                dataPath + "lineitem" + extension,
-                _queryPlan).setHashIndexes(hashLineitem)
-                           .addOperator(selectionLineitem)
-                           .addOperator(projectionLineitem);        
-        
-        //-------------------------------------------------------------------------------------
         List<Integer> hashOrders = Arrays.asList(0);
 
         SelectOperator selectionOrders = new SelectOperator(
@@ -94,6 +75,25 @@ public class TPCH4Plan {
                            .addOperator(projectionOrders);
 
         //-------------------------------------------------------------------------------------
+        List<Integer> hashLineitem = Arrays.asList(0);
+
+        SelectOperator selectionLineitem = new SelectOperator(
+                new ComparisonPredicate(
+                    ComparisonPredicate.LESS_OP,
+                    new ColumnReference(_dc, 11),
+                    new ColumnReference(_dc, 12)
+                ));
+
+        DistinctOperator distinctLineitem = new DistinctOperator(conf, new int[]{0});
+
+        DataSourceComponent relationLineitem = new DataSourceComponent(
+                "LINEITEM",
+                dataPath + "lineitem" + extension,
+                _queryPlan).setHashIndexes(hashLineitem)
+                           .addOperator(selectionLineitem)
+                           .addOperator(distinctLineitem);
+
+        //-------------------------------------------------------------------------------------
         EquiJoinComponent O_Ljoin = new EquiJoinComponent(
                 relationOrders,
                 relationLineitem,
@@ -101,9 +101,7 @@ public class TPCH4Plan {
 
         //-------------------------------------------------------------------------------------
         // set up aggregation function on a separate StormComponent(Bolt)
-        DistinctOperator distinctOp = new DistinctOperator(conf, new int[]{0});
-        AggregateOperator aggOp = new AggregateCountOperator(conf).setGroupByColumns(Arrays.asList(1))
-                .setDistinct(distinctOp);
+        AggregateOperator aggOp = new AggregateCountOperator(conf).setGroupByColumns(Arrays.asList(1));
         OperatorComponent finalComponent = new OperatorComponent(
                 O_Ljoin,
                 "FINAL_RESULT",

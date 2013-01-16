@@ -5,10 +5,10 @@ package sql.util;
  * Occurs when an optimizer tries to assign parallelism (which is obtained by the formula)
  *   more than how many distinct join condition key values are there.
  */
-public class ImproperParallelismException extends RuntimeException {
+public class OverParallelizedException extends RuntimeException {
     private String _msg;
     
-    public ImproperParallelismException(String msg){
+    public OverParallelizedException(String msg){
         _msg = msg;
     }
     

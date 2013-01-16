@@ -5,7 +5,9 @@ import backtype.storm.utils.Utils;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.log4j.Logger;
 
@@ -13,19 +15,17 @@ public class SystemParameters{
     private static Logger LOG = Logger.getLogger(SystemParameters.class);
 
     //the content of ~/.storm/storm.yaml
-    public static final int DEFAULT_NUM_ACKERS = 0;
-    public static final int CLUSTER_SIZE = 220;
+    public static final int DEFAULT_NUM_ACKERS = 0;    
 
     //used only in clustered mode execution
     //max number of tuples sent before receiving ack for any of them
-    //public static final int MAX_SPOUT_PENDING=5000;
+    public static final int MAX_SPOUT_PENDING=5000;
 
     //used in StormWrapper for submitting topology, for both local and clustered mode
     //local mode: TPCH7 1GB needs 3000sec, TPCH8 100MB needs 1000s
     //clustered mode: TPCH7 1GB needs 30sec, 2GB needs 60sec, 8GB needs 90sec, 10GB needs 150sec
     //                all TPCH3 are done within 150sec
-    //not true anymore, especially when topology.enable.message.timeouts: false(not sure if this has some effect)
-    //public static final int MESSAGE_TIMEOUT_SECS = 150;
+    public static final int MESSAGE_TIMEOUT_SECS = 150;
     
     //used in StormDataSource, for both local and clustered mode
     public static final long EOF_TIMEOUT_MILLIS = 1000;
@@ -37,15 +37,7 @@ public class SystemParameters{
     public static final long CLUSTER_SLEEP_BEFORE_KILL_MILLIS = 2000;
 
     //default port, should not be changed unless some other application took this port
-    public static final int NIMBUS_THRIFT_PORT = 6627;
-    
-    //***************************SendAndWait parameters********************************
-    
-    //how much space average tuple takes to be stored
-    public static final int TUPLE_SIZE_BYTES = 50;
-    //the factor we multiply predicted storage
-    public static final int JAVA_OVERHEAD = 7;
-    //***************************SendAndWait parameters********************************
+    public static final int NIMBUS_THRIFT_PORT = 6627;    
     
     //DO NOT MODIFY OR MOVE ANYWHERE ELSE. THESE ARE NOT CONFIGURATION VARIABLES
     public static final String DATA_STREAM = Utils.DEFAULT_STREAM_ID; /* "default" */
@@ -55,11 +47,16 @@ public class SystemParameters{
     public static final String LAST_ACK = "LAST_ACK";
     public static final String EOF = "EOF";
     public static final String DUMP_RESULTS = "DumpResults";
-
-    public static final long BYTES_IN_MB = 1024 * 1024;
     
-    public static final String MANUAL_BATCH_HASH_DELIMITER = "~";
-    public static final String MANUAL_BATCH_TUPLE_DELIMITER = "`";    
+    public static final String MULTIPLICITY_HASH_DELIMITER = "~";
+    
+    public static final List<String> tupleInfoHeader = new ArrayList<String>(){
+		private static final long serialVersionUID = 5099584157172810580L;
+
+	{
+        add("Multiplicity");
+       // add("Timestamp");
+    }};
     
     public static boolean isExisting(Map conf, String key){
         String result =  (String) conf.get(key);
@@ -68,6 +65,7 @@ public class SystemParameters{
 
     public static String getString(Map conf, String key){
         String result =  (String) conf.get(key);
+       
         if (result == null || result.equals(""))
             LOG.info ("null in getString method for key " + key);
         return result;

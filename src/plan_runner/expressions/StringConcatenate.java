@@ -85,4 +85,13 @@ public class StringConcatenate implements ValueExpression<String> {
 		return false;
 	}
 
+	@Override
+	public String eval(List<String> tuple, Long tupleMultiplicity) {
+		String result = "";
+        for(ValueExpression<String> str: _strList){
+            result += str;
+        }
+        return result;
+	}
+
 }

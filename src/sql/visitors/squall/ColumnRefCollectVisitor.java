@@ -64,4 +64,10 @@ public class ColumnRefCollectVisitor implements ValueExpressionVisitor{
         //constant
     }
 
+	@Override
+	public void visit(Substring substring) {
+		visit(substring.getInnerExpressions());
+		
+	}
+
 }

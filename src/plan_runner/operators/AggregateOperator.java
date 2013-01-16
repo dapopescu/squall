@@ -29,6 +29,13 @@ public interface AggregateOperator<T> extends Operator{
 
     public T runAggregateFunction(T value, List<String> tuple);
     public T runAggregateFunction(T value1, T value2);
+    
+    public T runAggregateFunction(T value, List<String> tuple, Long tupleMultiplicity);
+    public T runAggregateFunction(T value1, T value2, Long multiplicity);
+    
+    public AggregateOperator createInstance();
+    
+    public List<String> getAggregateValue (List<String> tuple);
 
     //HAVING clause: Since HAVING depends on aggregate result,
     //  it cannot be evaluated before all the tuples are processed.

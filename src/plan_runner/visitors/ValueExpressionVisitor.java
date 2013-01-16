@@ -7,6 +7,7 @@ import plan_runner.expressions.Division;
 import plan_runner.expressions.IntegerYearFromDate;
 import plan_runner.expressions.Multiplication;
 import plan_runner.expressions.StringConcatenate;
+import plan_runner.expressions.Substring;
 import plan_runner.expressions.Subtraction;
 import plan_runner.expressions.ValueSpecification;
 
@@ -21,4 +22,5 @@ public interface ValueExpressionVisitor {
     public void visit(StringConcatenate sc);
     public void visit(Subtraction sub);
     public void visit(ValueSpecification vs);
+	public void visit(Substring substring);
 }

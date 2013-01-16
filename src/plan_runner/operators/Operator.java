@@ -5,8 +5,8 @@ import java.util.List;
 import plan_runner.visitors.OperatorVisitor;
 
 public interface Operator extends Serializable {
-    public List<String> process(List<String> tuple);
-
+    public List<String> process(List<String> tuple, Object... tupleInfo);
+    
     /* return true if an operator is blocking (can revoke previously sent tuple) */
     public boolean isBlocking();
     

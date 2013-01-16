@@ -64,5 +64,9 @@ public class SumCount implements Comparable<SumCount>, Serializable{
         }else{
             return 0;
         }
-    }    
+    } 
+    
+    public String toString() {
+    	return "[" + _sum + ":" + _count + "]";
+    }
 }

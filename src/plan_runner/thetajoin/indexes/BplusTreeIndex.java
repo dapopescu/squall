@@ -213,7 +213,22 @@ public class BplusTreeIndex<KeyType extends Comparable<KeyType>>
 		idsList.add(row_id);
 	}
 	
-	
-	
+	public void remove(KeyType key, Integer row_id) {
+
+		// find node where key could be
+		LeafNode<KeyType, TIntArrayList> ln = _index.findLeafNode(key);
+
+		TIntArrayList idsList = _index.get(key);
+		if (idsList == null) {
+			_index.remove(key);
+		}
+		else {
+			int index = idsList.binarySearch(row_id);
+			idsList.remove(index);
+			if (idsList.size() == 0)
+				_index.remove(key);
+		}
+		
+	}
 
 }

@@ -7,6 +7,7 @@ import java.util.Map;
 import org.apache.log4j.Logger;
 import plan_runner.conversion.LongConversion;
 import plan_runner.conversion.NumericConversion;
+import plan_runner.conversion.SumCount;
 import plan_runner.conversion.TypeConversion;
 import plan_runner.expressions.ValueExpression;
 import plan_runner.storage.AggregationStorage;
@@ -104,7 +105,7 @@ public class AggregateCountOperator implements AggregateOperator<Long>{
 
          //from Operator
         @Override
-        public List<String> process(List<String> tuple){
+        public List<String> process(List<String> tuple, Object... tupleInfo){
             _numTuplesProcessed++;
             if(_distinct != null){
                 tuple = _distinct.process(tuple);
@@ -118,7 +119,12 @@ public class AggregateCountOperator implements AggregateOperator<Long>{
             }else{
                 tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _map);
             }
-            Long value =  (Long)_storage.update(tuple, tupleHash);
+            
+            Long value = null;
+            if (tupleInfo.length > 0)
+            	value = _storage.update(tuple, tupleHash, (Long)tupleInfo[0]);
+            else value = _storage.update(tuple, tupleHash);
+            
             String strValue = _wrapper.toString(value);
             
             // propagate further the affected tupleHash-tupleValue pair
@@ -212,5 +218,46 @@ public class AggregateCountOperator implements AggregateOperator<Long>{
         public void accept(OperatorVisitor ov){
             ov.visit(this);
         }
+
+		@Override
+		public Long runAggregateFunction(Long value, List<String> tuple,
+				Long tupleMultiplicity) {
+			return value + tupleMultiplicity;
+		}
+
+		@Override
+		public Long runAggregateFunction(Long value1, Long value2,
+				Long multiplicity) {
+			return value1 +  multiplicity;
+		}
+
+		@Override
+		public AggregateOperator createInstance() {
+			return new AggregateCountOperator(_map);
+		}
+		
+		@Override
+		public List<String> getAggregateValue(List<String> tuple) {
+			String tupleHash;
+	        if(_groupByType == GB_PROJECTION){
+	            tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _groupByProjection.getExpressions(), _map);
+	        }else{
+	            tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _map);
+	        }
+	        List<Long> values = _storage.access(tupleHash);
+	        if (values != null) {
+	        	Long value = values.get(0);
+	        
+	        	String strValue = _wrapper.toString(value);
+
+	        	// propagate further the affected tupleHash-tupleValue pair
+	        	List<String> aggTuple = new ArrayList<String>();
+	        	aggTuple.add(tupleHash);
+	        	aggTuple.add(strValue);
+	        
+	        	return aggTuple;
+	        }
+	        return null;
+		}
 
 }

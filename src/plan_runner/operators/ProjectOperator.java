@@ -35,7 +35,7 @@ public class ProjectOperator implements Operator {
         }
 
         @Override
-	public List<String> process(List<String> tuple) {
+	public List<String> process(List<String> tuple, Object... tupleInfo) {
             _numTuplesProcessed++;
             List<String> projection = new ArrayList<String>();
             for(ValueExpression ve: _veList){
@@ -68,10 +68,7 @@ public class ProjectOperator implements Operator {
         @Override
         public String toString(){
             StringBuilder sb = new StringBuilder();
-            sb.append("ProjectOperator ");
-            if(!_veList.isEmpty()){
-                sb.append("(");
-            }
+            sb.append("ProjectOperator (");
             for(int i=0; i<_veList.size();i++){
                 sb.append(_veList.get(i).toString());
                 if(i==_veList.size()-1){

@@ -45,7 +45,7 @@ public class DistinctOperator implements Operator {
 	/* If tuple is present in the collection, return null,
 	   otherwise, return projected tuple */
 	@Override
-	public List<String> process(List<String> tuple) {
+	public List<String> process(List<String> tuple, Object... tupleInfo) {
 		_numTuplesProcessed++;
 		List<String> projectedTuple = _projection.process(tuple);
 		String projectedTupleString = MyUtilities.tupleToString(projectedTuple, this._conf);

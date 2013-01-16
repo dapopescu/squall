@@ -1,0 +1,32 @@
+DIP_DISTRIBUTED true
+DIP_QUERY_NAME tpch17
+DIP_TOPOLOGY_NAME_PREFIX username
+
+DIP_DATA_PATH /data/squall_blade/data/tpchdb/1G
+DIP_DATA_ROOT /data/squall_blade/data/tpchdb
+DIP_DB_SIZE 1
+
+
+PART_PAR 10
+LINEITEM_PAR 30
+PART_LINEITEM_PAR 35
+LINEITEM2_PAR 30
+AVG_LINEITEM_PAR 30
+PART_LINEITEM_AVG_LINEITEM_PAR 40
+
+#below are unlikely to change
+DIP_EXTENSION .tbl
+DIP_READ_SPLIT_DELIMITER \|
+DIP_GLOBAL_ADD_DELIMITER |
+DIP_GLOBAL_SPLIT_DELIMITER \|
+
+DIP_KILL_AT_THE_END true
+DIP_ACK_EVERY_TUPLE true
+
+# Storage manager parameters
+# Storage directory for local runs
+STORAGE_LOCAL_DIR /tmp/ramdisk
+# Storage directory for cluster runs
+STORAGE_CLUSTER_DIR /export/home/squalldata/storage 
+STORAGE_COLD_START true
+STORAGE_MEMORY_SIZE_MB 4096

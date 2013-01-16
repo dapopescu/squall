@@ -18,7 +18,7 @@ public class MultiAggregateOperator implements AggregateOperator {
     }
 
     @Override
-    public List<String> process(List<String> tuple) {
+    public List<String> process(List<String> tuple, Object... tupleInfo) {
         //this will work only if they have the same groupBy
         //otherwise the result of process is not important at all
         List<String> result = new ArrayList<String>();
@@ -151,5 +151,31 @@ public class MultiAggregateOperator implements AggregateOperator {
     @Override
     public boolean hasGroupBy(){
         throw new UnsupportedOperationException("You are not supposed to call this method from MultiAggregateOperator.");
-    }    
+    }
+
+	@Override
+	public Object runAggregateFunction(Object value, List tuple,
+			Long tupleMultiplicity) {
+		 throw new UnsupportedOperationException("You are not supposed to call this method from MultiAggregateOperator.");
+	}
+
+	@Override
+	public Object runAggregateFunction(Object value1, Object value2,
+			Long multiplicity) {
+		 throw new UnsupportedOperationException("You are not supposed to call this method from MultiAggregateOperator.");
+	}
+
+	@Override
+	public AggregateOperator createInstance() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public List getAggregateValue(List tuple) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+ 
 }

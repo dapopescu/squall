@@ -78,7 +78,6 @@ public class CostEstimator {
         setOutputParams(source);
         
         _parAssigner.setParallelism(source, _compCost);
-        _parAssigner.setBatchSize(source, _compCost); //has to go after parallelism
     }
 
     
@@ -105,7 +104,6 @@ public class CostEstimator {
         setOutputParams(joinComponent);
         
         _parAssigner.setParallelism(joinComponent, _compCost);
-        _parAssigner.setBatchSize(joinComponent, _compCost); // has to go after setting parallelism
     }
     
     //***********OperatorComponent***********    
@@ -121,7 +119,6 @@ public class CostEstimator {
         setOutputParams(opComp);
         
         _parAssigner.setParallelism(opComp, _compCost);
-        _parAssigner.setBatchSize(opComp, _compCost);
     }    
     
     //***********HELPER methods***********    
@@ -185,7 +182,7 @@ public class CostEstimator {
             double ratio = _schema.getRatio(leftJoinTableSchemaName, rightJoinTableSchemaName);
             if(ratio < 1){
                 //if we are joining bigger and smaller relation, the size of join does not decrease
-                //it has to be 1
+                //if has to be 1
                 ratio = 1;
             }
             //in case of bushy plans it's proportion of sizes

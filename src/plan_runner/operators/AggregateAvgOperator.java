@@ -1,6 +1,7 @@
 package plan_runner.operators;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.apache.log4j.Logger;
@@ -8,6 +9,7 @@ import plan_runner.conversion.NumericConversion;
 import plan_runner.conversion.SumCount;
 import plan_runner.conversion.SumCountConversion;
 import plan_runner.conversion.TypeConversion;
+import plan_runner.expressions.ColumnReference;
 import plan_runner.expressions.ValueExpression;
 import plan_runner.storage.AggregationStorage;
 import plan_runner.storage.BasicStore;
@@ -106,7 +108,7 @@ public class AggregateAvgOperator implements AggregateOperator<SumCount> {
 
         //from Operator
         @Override
-        public List<String> process(List<String> tuple){
+        public List<String> process(List<String> tuple, Object... tupleInfo){
             _numTuplesProcessed++;
             if(_distinct != null){
                 tuple = _distinct.process(tuple);
@@ -120,7 +122,12 @@ public class AggregateAvgOperator implements AggregateOperator<SumCount> {
             }else{
                 tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _map);
             }
-            SumCount sumCount = _storage.update(tuple, tupleHash);
+          
+            SumCount sumCount = null;
+            if (tupleInfo.length > 0) {
+            	sumCount = _storage.update(tuple, tupleHash, (Long)tupleInfo[0]);
+            }
+            else sumCount = _storage.update(tuple, tupleHash);
             String strValue = _wrapper.toString(sumCount);
 
             // propagate further the affected tupleHash-tupleValue pair
@@ -189,7 +196,19 @@ public class AggregateAvgOperator implements AggregateOperator<SumCount> {
 
         @Override
         public List<String> getContent() {
-            throw new UnsupportedOperationException("getContent for AggregateAvgOperator is not supported yet.");
+            //throw new UnsupportedOperationException("getContent for AggregateAvgOperator is not supported yet.");
+        	 String str = _storage.getContent(); 
+        	 if (str != null) {
+        		 List<String> tuples = Arrays.asList(str.split("\\r?\\n"));
+        		 for (int i = 0; i < tuples.size(); i ++) {
+        			 String tuple = tuples.get(i);
+        			 tuple = tuple.replace("[", "");
+        			 tuple = tuple.replace("]", "");
+        			 tuples.set(i, tuple);
+        		 }
+        		 return tuples;
+        	 }
+             return null;
         }
 
 
@@ -233,4 +252,67 @@ public class AggregateAvgOperator implements AggregateOperator<SumCount> {
         public void accept(OperatorVisitor ov){
             ov.visit(this);
         }
+
+
+		@Override
+		public SumCount runAggregateFunction(SumCount value,
+				List<String> tuple, Long tupleMultiplicity) {
+			Double sumDelta;
+            Long countDelta;
+            
+            TypeConversion veType = _ve.getType();
+            if(veType instanceof SumCountConversion){
+                //when merging results from multiple Components which have SumCount as the output
+                SumCount sc = (SumCount) _ve.eval(tuple);
+                sumDelta = sc.getSum() * tupleMultiplicity;
+                countDelta = sc.getCount() * tupleMultiplicity;
+            }else{
+                NumericConversion nc = (NumericConversion) veType;
+                sumDelta = nc.toDouble(_ve.eval(tuple)) * tupleMultiplicity;
+                countDelta = 1L * tupleMultiplicity;
+            }
+            
+            Double sumNew = sumDelta + value.getSum();
+            Long countNew = countDelta + value.getCount();
+          
+            return new SumCount(sumNew, countNew);
+		}
+
+		@Override
+		public SumCount runAggregateFunction(SumCount value1, SumCount value2,
+				Long multiplicity) {
+			Double sumNew = value1.getSum() + value2.getSum() * multiplicity;
+            Long countNew = value1.getCount() + value2.getCount() * multiplicity;
+            return new SumCount(sumNew, countNew);
+		}
+
+		@Override
+		public AggregateOperator createInstance() {
+			return new AggregateAvgOperator(new ColumnReference<SumCount>(_wrapper, 1), _map);
+		}
+		
+		@Override
+		public List<String> getAggregateValue(List<String> tuple) {
+			String tupleHash;
+	        if(_groupByType == GB_PROJECTION){
+	            tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _groupByProjection.getExpressions(), _map);
+	        }else{
+	            tupleHash = MyUtilities.createHashString(tuple, _groupByColumns, _map);
+	        }
+	        List<SumCount> values = _storage.access(tupleHash);
+	      
+	        if (values != null) {
+	        	SumCount value = values.get(0);
+	        
+	        	String strValue = _wrapper.toString(value);
+
+	        	// propagate further the affected tupleHash-tupleValue pair
+	        	List<String> aggTuple = new ArrayList<String>();
+	        	aggTuple.add(tupleHash);
+	        	aggTuple.add(strValue);
+	        
+	        	return aggTuple;
+	        }
+	        return null;
+		}
 }

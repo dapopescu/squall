@@ -60,23 +60,21 @@ public class StormSrcHarmonizer extends BaseRichBolt implements StormComponent {
             String inputComponentIndex=stormRcvTuple.getString(0);
             List<String> tuple = (List<String>) stormRcvTuple.getValue(1);
             String inputTupleHash=stormRcvTuple.getString(2);
+            int multiplicity = stormRcvTuple.getInteger(3);
 
             if(MyUtilities.isFinalAck(tuple, _conf)){
                 _numRemainingParents--;
-                MyUtilities.processFinalAck(_numRemainingParents, 
-                        StormComponent.INTERMEDIATE, 
-                        _conf,
-                        stormRcvTuple, 
-                        _collector);
+                MyUtilities.processFinalAck(_numRemainingParents, StormComponent.INTERMEDIATE, stormRcvTuple, _collector);
                 return;
             }
 
-            _collector.emit(stormRcvTuple, new Values(inputComponentIndex, tuple, inputTupleHash));
+         //  _collector.emit(stormRcvTuple, new Values(inputComponentIndex, tuple, inputTupleHash));
+            _collector.emit(stormRcvTuple, new Values(inputComponentIndex, tuple, inputTupleHash, multiplicity));
             _collector.ack(stormRcvTuple);
 	}
 
         @Override
-        public void tupleSend(List<String> tuple, Tuple stormTupleRcv, long timestamp) {
+        public void tupleSend(List<String> tuple, Tuple stormTupleRcv) {
             throw new RuntimeException("Should not be here!");
         }
 
@@ -93,7 +91,8 @@ public class StormSrcHarmonizer extends BaseRichBolt implements StormComponent {
 
 	@Override
 	public void declareOutputFields(OutputFieldsDeclarer declarer) {
-		declarer.declare(new Fields("CompIndex", "Tuple", "Hash"));
+		//declarer.declare(new Fields("CompIndex", "Tuple", "Hash"));
+		declarer.declare(new Fields("CompIndex", "Tuple", "Hash", "Multiplicity"));
 	}
 
         //from StormComponent
@@ -107,11 +106,6 @@ public class StormSrcHarmonizer extends BaseRichBolt implements StormComponent {
             String str = "Harmonizer " + _componentName + " has ID: "+ _ID;
             return str;
         }
-        
-        @Override
-        public void printTupleLatency(long numSentTuples, long timestamp) {
-            //empty
-        }        
 
         public void printTuple(List<String> tuple) {
             //this is purposely empty
@@ -119,6 +113,14 @@ public class StormSrcHarmonizer extends BaseRichBolt implements StormComponent {
 
         public void printContent() {
             //this class has no content: this is purposely empty
-        }       
+        }
 
+		@Override
+		public void tupleSend(List<String> tuple, Tuple stormTupleRcv,
+				Object... tupleInfo) {
+			 throw new RuntimeException("Should not be here!");
+			
+		}
+
+		
 }

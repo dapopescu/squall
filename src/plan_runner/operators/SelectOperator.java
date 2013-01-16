@@ -20,7 +20,7 @@ public class SelectOperator implements Operator {
     }
 
     @Override
-    public List<String> process(List<String> tuple) {
+    public List<String> process(List<String> tuple, Object... tupleInfo) {
         _numTuplesProcessed++;
         if (_predicate.test(tuple)){
             return tuple;
@@ -61,4 +61,5 @@ public class SelectOperator implements Operator {
     public void accept(OperatorVisitor ov){
         ov.visit(this);
     }
+    
 }

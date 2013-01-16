@@ -58,6 +58,7 @@ public class EquiJoinComponent implements Component {
       _componentName = firstParent.getName() + "_" + secondParent.getName();
 
       queryPlan.add(this);
+   
     }
 
     //list of distinct keys, used for direct stream grouping and load-balancing ()

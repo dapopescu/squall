@@ -105,11 +105,11 @@ public class ChainOperator implements Operator {
      *   Otherwise return null.
      */
     @Override
-    public List<String> process(List<String> tuple) {
+    public List<String> process(List<String> tuple, Object... tupleInfo) {
         List<String> result = tuple;
 
         for(Operator operator: _operators){
-             result = operator.process(result);
+             result = operator.process(result, tupleInfo);
              if(result == null){
                  break;
              }
@@ -175,4 +175,5 @@ public class ChainOperator implements Operator {
     public void accept(OperatorVisitor ov){
         ov.visit(this);
     }
+
 }

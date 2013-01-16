@@ -86,5 +86,14 @@ public class DateSum implements ValueExpression<Date>{
 		return false;
 	}
 
+	@Override
+	public Date eval(List<String> tuple, Long tupleMultiplicity) {
+		Date base = _ve.eval(tuple);
+        Calendar c = Calendar.getInstance();
+        c.setTime(base);
+        c.add(_unit, _interval);
+        return c.getTime();
+	}
+
 
 }

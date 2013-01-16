@@ -7,15 +7,23 @@ import java.util.List;
 import java.util.Map;
 import org.apache.log4j.Logger;
 import plan_runner.components.Component;
+import plan_runner.query_plans.HyracksBatchPlan;
 import plan_runner.query_plans.HyracksPlan;
 import plan_runner.query_plans.HyracksPreAggPlan;
+import plan_runner.query_plans.NestedFirstPlan;
 import plan_runner.query_plans.QueryPlan;
 import plan_runner.query_plans.RSTPlan;
 import plan_runner.query_plans.TPCH10Plan;
+import plan_runner.query_plans.TPCH17BatchPlan;
+import plan_runner.query_plans.TPCH17ConstantPlan;
+import plan_runner.query_plans.TPCH17Plan;
+import plan_runner.query_plans.TPCH18Plan;
+import plan_runner.query_plans.TPCH20Plan;
+import plan_runner.query_plans.TPCH22Plan;
+import plan_runner.query_plans.TPCH22constantPlan;
 import plan_runner.query_plans.TPCH3Plan;
 import plan_runner.query_plans.TPCH4Plan;
 import plan_runner.query_plans.TPCH5Plan;
-import plan_runner.query_plans.debug.TPCH5PlanAvg;
 import plan_runner.query_plans.TPCH7Plan;
 import plan_runner.query_plans.TPCH8Plan;
 import plan_runner.query_plans.TPCH9Plan;
@@ -39,27 +47,36 @@ import plan_runner.utilities.SystemParameters;
 
 public class Main {
 	private static Logger LOG = Logger.getLogger(Main.class);
-        
+	public static QueryPlan queryPlan = null;
+	
         public static void main(String[] args) {
            new Main(args);
         }
 
         public Main(String[] args){
             String confPath = args[0];
-            Config conf = SystemParameters.fileToStormConfig(confPath);
-            QueryPlan queryPlan = chooseQueryPlan(conf);
             
+          /*  Config conf = SystemParameters.fileToStormConfig(confPath);
+            queryPlan = chooseQueryPlan(conf);
             addVariablesToMap(conf, confPath);
-            putBatchSizes(queryPlan, conf);
-	    TopologyBuilder builder = createTopology(queryPlan, conf);
-            StormWrapper.submitTopology(conf, builder);
+            TopologyBuilder builder = createTopology(queryPlan, conf);
+            StormWrapper.submitTopology(conf, builder);*/
+            
+            
+            ////////////////////////////////////
+            
+            
+            Map map = createConfig(confPath);
+            queryPlan = chooseQueryPlan(map);
+            addVariablesToMap(map, confPath);
+            new Main(queryPlan, map, confPath); 
+            /////////////////////////////////////
         }
 
         public Main(QueryPlan queryPlan, Map map, String confPath){
             Config conf = SystemParameters.mapToStormConfig(map);
             
             addVariablesToMap(conf, confPath);
-            putBatchSizes(queryPlan, conf);
             TopologyBuilder builder = createTopology(queryPlan, conf);
             StormWrapper.submitTopology(conf, builder);
         }
@@ -70,34 +87,8 @@ public class Main {
             String prefix = SystemParameters.getString(map, "DIP_TOPOLOGY_NAME_PREFIX");
             String topologyName = prefix + "_" + confFilename;
             SystemParameters.putInMap(map, "DIP_TOPOLOGY_NAME", topologyName);
+       
         }
-        
-        //this method is a skeleton for more complex ones
-        //  an optimizer should do this in a smarter way
-        private static void putBatchSizes(QueryPlan plan, Map map) {
-            if(SystemParameters.isExisting(map, "BATCH_SIZE")){
-                
-                //if the batch mode is specified, but nothing is put in map yet (because other than MANUAL_BATCH optimizer is used)
-                String firstBatch = plan.getComponentNames().get(0) + "_BS";
-                if(!SystemParameters.isExisting(map, firstBatch)){
-                    String batchSize = SystemParameters.getString(map, "BATCH_SIZE");
-                    for(String compName: plan.getComponentNames()){
-                        String batchStr = compName + "_BS";                
-                        SystemParameters.putInMap(map, batchStr, batchSize);
-                    }
-                }
-                
-                //no matter where this is set, we print out batch sizes of components
-                for(String compName: plan.getComponentNames()){
-                        String batchStr = compName + "_BS";
-                        String batchSize = SystemParameters.getString(map, batchStr);
-                        LOG.info("Batch size for " + compName + " is " + batchSize);
-                }
-            }
-            if(!MyUtilities.checkSendMode(map)){
-                throw new RuntimeException("BATCH_SEND_MODE value is not recognized.");
-            }
-        } 
 
         private static TopologyBuilder createTopology(QueryPlan qp, Config conf) {
             TopologyBuilder builder = new TopologyBuilder();
@@ -180,8 +171,6 @@ public class Main {
                 queryPlan = new TPCH4Plan(dataPath, extension, conf).getQueryPlan();
             }else if(queryName.equalsIgnoreCase("tpch5")){
                 queryPlan = new TPCH5Plan(dataPath, extension, conf).getQueryPlan();
-            }else if(queryName.equalsIgnoreCase("tpch5avg")){
-                queryPlan = new TPCH5PlanAvg(dataPath, extension, conf).getQueryPlan();
             }else if(queryName.equalsIgnoreCase("tpch7")){
                 queryPlan = new TPCH7Plan(dataPath, extension, conf).getQueryPlan();
             }else if(queryName.equalsIgnoreCase("tpch8")){
@@ -200,6 +189,24 @@ public class Main {
             	queryPlan = new ThetaMultipleJoinPlan(dataPath, extension, conf).getQueryPlan();
             }else if (queryName.equalsIgnoreCase("theta_hyracks")){
             	queryPlan = new ThetaHyracksPlan(dataPath, extension, conf).getQueryPlan();
+            }else if (queryName.equalsIgnoreCase("nested_first")){
+            	queryPlan = new NestedFirstPlan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch17")){
+                queryPlan = new TPCH17Plan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch17batch")){
+                queryPlan = new TPCH17BatchPlan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch20")){
+                queryPlan = new TPCH20Plan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("hyracksbatch")){
+            	queryPlan = new HyracksBatchPlan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch18")){
+            	queryPlan = new TPCH18Plan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch17constant")){
+            	queryPlan = new TPCH17ConstantPlan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch22")){
+            	queryPlan = new TPCH22Plan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch22constant")){
+            	queryPlan = new TPCH22constantPlan(dataPath, extension, conf).getQueryPlan();
             }
             // ... this line
 
@@ -208,4 +215,37 @@ public class Main {
             }
             return queryPlan;
         }
+        
+        ///////////////////////////////////////////////////////////////////
+        
+        public Map createConfig(String parserConfPath){
+            Map map = SystemParameters.fileToMap(parserConfPath);
+
+            if(!SystemParameters.getBoolean(map, "DIP_ACK_EVERY_TUPLE")){
+                //we don't ack after each tuple is sent, 
+                //  so we don't need any node to be dedicated for acking
+                CLUSTER_ACKERS = 0;
+                LOCAL_ACKERS = 0;
+            }
+
+            if (SystemParameters.getBoolean(map, "DIP_DISTRIBUTED")){
+                //default value is already set, but for scheduling we might need to change that
+                //SystemParameters.putInMap(map, "DIP_NUM_WORKERS", CLUSTER_WORKERS);
+                SystemParameters.putInMap(map, "DIP_NUM_ACKERS", CLUSTER_ACKERS);
+            }else{
+                SystemParameters.putInMap(map, "DIP_NUM_ACKERS", LOCAL_ACKERS);
+            }
+
+            String dbSize = SystemParameters.getString(map, "DIP_DB_SIZE") + "G";
+            String dataRoot = SystemParameters.getString(map, "DIP_DATA_ROOT");
+            String dataPath = dataRoot + "/" + dbSize + "/";
+
+            SystemParameters.putInMap(map, "DIP_DATA_PATH" , dataPath);
+       
+            return map;
+        }
+        
+        private static int CLUSTER_ACKERS = 17; //could be 10% of CLUSTER_WORKERS, but this is a magic number in our system
+
+        private static int LOCAL_ACKERS = 1;
 }

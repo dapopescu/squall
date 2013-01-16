@@ -18,4 +18,6 @@ public interface Index<KeyType> extends Serializable {
 
 	public TIntArrayList getValues(KeyType key);
 
+	public void remove(KeyType key, Integer row_id);
+
 }

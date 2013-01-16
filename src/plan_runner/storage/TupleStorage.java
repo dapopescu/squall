@@ -15,7 +15,6 @@ public class TupleStorage implements Serializable {
 
 	private TIntObjectHashMap<String> _storage;
 	private int _lastId;
-
 	
 	public TupleStorage()
 	{

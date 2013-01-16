@@ -199,6 +199,33 @@ public class StorageManager<R> implements Serializable {
 		}
 		this.write(groupId, values.toArray());
 	}
+	
+	public R remove(String groupId, R value) {	
+		if (value == null) {
+			if (new File(groupId).delete() == false) {
+				System.out.println("Squall StorageManager: Couldn't erase old file during remove!");	
+				System.exit(-1);
+			}
+			return null;
+		}
+		ArrayList<R> values = this.read(groupId); 
+			
+		// Get the index of the old value (if it exists)
+		int index = values.indexOf(value);
+		if (index == -1) {
+			System.out.println("Squall StorageManager: Element not found during remove!");	
+			System.exit(-1);
+		}
+		R removedValue = values.remove(index);
+
+		/* Now RMW: delete old file, and write a new one */
+		if (new File(groupId).delete() == false) {
+			System.out.println("Squall StorageManager: Couldn't erase old file during remove!");	
+			System.exit(-1);
+		}
+		this.write(groupId, values.toArray());
+		return removedValue;
+	}
 
 	private void closeFile() {
 		try {

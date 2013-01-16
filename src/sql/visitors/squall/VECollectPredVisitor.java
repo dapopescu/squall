@@ -44,5 +44,10 @@ public class VECollectPredVisitor implements PredicateVisitor{
     public void visit(LikePredicate like) {
         _veList.addAll(like.getExpressions());
     }
+    
+    @Override
+    public void visit(LikePredicateGeneral like) {
+        _veList.addAll(like.getExpressions());
+    }
 
 }

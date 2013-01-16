@@ -124,9 +124,7 @@ public class IndexSimpleOptimizer implements Optimizer {
 
                 //WARNING: groupByVEs cannot be used on two places: that's why we do deep copy
                 ProjectOperator groupByProj = new ProjectOperator((List<ValueExpression>)DeepCopy.copy(groupByVEs));
-                if(!(groupByProj.getExpressions() == null || groupByProj.getExpressions().isEmpty())){
-                    firstAgg.setGroupByProjection(groupByProj);
-                }
+                firstAgg.setGroupByProjection(groupByProj);
 
                 //current component
                 affectedComponent.setHashExpressions((List<ValueExpression>)DeepCopy.copy(groupByVEs));

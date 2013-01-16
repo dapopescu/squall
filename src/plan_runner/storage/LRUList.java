@@ -70,6 +70,21 @@ public class LRUList<V> implements ReplacementAlgorithm<V>, Serializable {
 		oldTail.next = null;
 		return oldTail.getObject();
 	}
+	
+	public V remove(Object obj) {
+		LRUNode<V> node = (LRUNode<V>)obj;
+		if (node == null)
+			return null;
+		if (node == this.head) 
+			this.head = node.next;
+		if (node.next != null)
+			node.next.prev = node.prev;
+		if (node.prev != null)
+			node.prev.next = node.next;
+		node.prev = null;
+		node.next = null;
+		return node.getObject();
+	}
 
 	public void reset() {
 		this.head = null;
