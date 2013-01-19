@@ -47,7 +47,7 @@ public class ThetaHyracksPlan {
             ColumnReference colOrders = new ColumnReference(_ic, 0);
             ComparisonPredicate comp = new ComparisonPredicate(ComparisonPredicate.EQUAL_OP, colCustomer, colOrders);
 
-            AggregateCountOperator agg = new AggregateCountOperator(conf) ; //.setGroupByColumns(Arrays.asList(1));
+            AggregateCountOperator agg = new AggregateCountOperator(conf).setGroupByColumns(Arrays.asList(1));
 
             ThetaJoinComponent CUSTOMER_ORDERSjoin = new ThetaJoinComponent(
                     relationCustomer,

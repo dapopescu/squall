@@ -9,6 +9,10 @@ import plan_runner.expressions.ValueExpression;
 import plan_runner.expressions.ValueSpecification;
 import plan_runner.visitors.PredicateVisitor;
 
+/*
+ * It works for any expression which contains % or _
+ */
+
 public class LikePredicateGeneral implements Predicate {
     /**
 	 * 
@@ -63,7 +67,7 @@ public class LikePredicateGeneral implements Predicate {
     public String toString(){
         StringBuilder sb = new StringBuilder();
         sb.append(_ve1.toString());
-        sb.append(" LIKE ");
+        sb.append(" LIKE GENERAL ");
         sb.append(_ve2.toString());
         return sb.toString();
     }

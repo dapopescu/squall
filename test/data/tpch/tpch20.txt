@@ -1,21 +1,3 @@
-select s_name, s_address
-from supplier, nation where
-s_suppkey in (
-	select ps_suppkey
-	from partsupp
-	where ps_partkey in (select p_partkey from part where p_name like 'forest%')
-	and ps_availqty > (select 0.5 * sum(l_quantity) from lineitem where
-			l_partkey = ps_partkey
-			and l_suppkey = ps_suppkey
-			and l_shipdate >= date('1994-01-01')
-			and l_shipdate < date('1995-01-01')
-	)
-)
-and s_nationkey = n_nationkey
-and n_name = 'CANADA'
-order by
-s_name;
-
 select s_name, s_address from SUPPLIER, NATION where s_suppkey in ( select ps_suppkey from PARTSUPP where ps_partkey in (select p_partkey from PART where p_name like 'forest%') and ps_availqty > (select 0.5 * sum(l_quantity) from LINEITEM where l_partkey = ps_partkey and l_suppkey = ps_suppkey and l_shipdate >= date('1994-01-01') and l_shipdate < date('1995-01-01') )) and s_nationkey = n_nationkey and n_name = 'CANADA' order by s_name;
 +--------------------+--------------------------------+
 | s_name             | s_address                      |
@@ -31,19 +13,4 @@ create view c20 as select ps_suppkey from a20, b20 where a20.l_partkey = b20.ps_
 
 select s_name, s_address from SUPPLIER, NATION, c20 where s_suppkey = c20.ps_suppkey and s_nationkey = n_nationkey and n_name = 'CANADA';
 
-
-| s_name             | s_address                            |
-+--------------------+--------------------------------------+
-| Supplier#000000020 | iybAE,RmTymrZVYaFZva2SH,j            |
-| Supplier#000000013 | HK71HQyWoqRWOX8GI FpgAifW,2PoH       |
-| Supplier#000000013 | HK71HQyWoqRWOX8GI FpgAifW,2PoH       |
-| Supplier#000000013 | HK71HQyWoqRWOX8GI FpgAifW,2PoH       |
-| Supplier#000000020 | iybAE,RmTymrZVYaFZva2SH,j            |
-| Supplier#000000091 | YV45D7TkfdQanOOZ7q9QxkyGUapU1oOWU6q3 |
-| Supplier#000000013 | HK71HQyWoqRWOX8GI FpgAifW,2PoH       |
-| Supplier#000000091 | YV45D7TkfdQanOOZ7q9QxkyGUapU1oOWU6q3 |
-| Supplier#000000020 | iybAE,RmTymrZVYaFZva2SH,j            |
-| Supplier#000000013 | HK71HQyWoqRWOX8GI FpgAifW,2PoH       |
-| Supplier#000000020 | iybAE,RmTymrZVYaFZva2SH,j            |
-+--------------------+--------------------------------------+
 

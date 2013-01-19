@@ -19,6 +19,7 @@ import plan_runner.query_plans.TPCH17ConstantPlan;
 import plan_runner.query_plans.TPCH17Plan;
 import plan_runner.query_plans.TPCH18Plan;
 import plan_runner.query_plans.TPCH20Plan;
+import plan_runner.query_plans.TPCH22BatchPlan;
 import plan_runner.query_plans.TPCH22Plan;
 import plan_runner.query_plans.TPCH22constantPlan;
 import plan_runner.query_plans.TPCH3Plan;
@@ -207,6 +208,8 @@ public class Main {
             	queryPlan = new TPCH22Plan(dataPath, extension, conf).getQueryPlan();
             }else if(queryName.equalsIgnoreCase("tpch22constant")){
             	queryPlan = new TPCH22constantPlan(dataPath, extension, conf).getQueryPlan();
+            }else if(queryName.equalsIgnoreCase("tpch22batch")){
+            	queryPlan = new TPCH22BatchPlan(dataPath, extension, conf).getQueryPlan();
             }
             // ... this line
 

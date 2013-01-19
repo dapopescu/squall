@@ -1,8 +1,10 @@
 package plan_runner.storm_components;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 
 import org.apache.log4j.Logger;
@@ -33,9 +35,13 @@ import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Tuple;
 import backtype.storm.tuple.Values;
 
-public class StormDstJoin extends BaseRichBolt implements StormJoin, StormComponent {
+/*
+ * Version of join not used currently
+ */
+
+public class StormDstJoin2 extends BaseRichBolt implements StormJoin, StormComponent {
 	private static final long serialVersionUID = 1L;
-	private static Logger LOG = Logger.getLogger(StormDstJoin.class);
+	private static Logger LOG = Logger.getLogger(StormDstJoin2.class);
 
 	private int _hierarchyPosition=INTERMEDIATE;
 
@@ -74,18 +80,17 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 	private long _batchOutputMillis;
 	
 	//keep current state for result of nested query
-	private AggregationStorage _firstNestedQueryStorage;
-	private AggregationStorage _secondNestedQueryStorage;
+	private AggregationStorage _nestedQueryStorage;
 	//keep pair tuple - current state for nested query
-	private KeyValueStore<String, String> _firstCorrespondenceStorage;
-	private KeyValueStore<String, String> _secondCorrespondenceStorage;
+	private KeyValueStore<String, String> _nestedQueryCorrespondenceStorage;
+	private KeyValueStore<String, String> _nestedQueryNbTuplesToJoinStorage;
 	private boolean _isFirstEmitterNestedQuery = false;
 	private boolean _isSecondEmitterNestedQuery = false;
-	private boolean _firstNestedQueryHasGroupBy = false;
-	private boolean _secondNestedQueryHasGroupBy = false;
+	private boolean _nestedQueryHasGroupBy = false;
 	private BasicStore<ArrayList<List<String>>> _previousAggResult; 
+	private BasicStore<ArrayList<List<String>>> _lastAggReceived; 
 		
-	public StormDstJoin(StormEmitter firstEmitter,
+	public StormDstJoin2(StormEmitter firstEmitter,
 			StormEmitter secondEmitter,
 			ComponentProperties cp,
 			List<String> allCompNames,
@@ -123,39 +128,42 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 		_fullHashList = cp.getFullHashList();
 		
 		_previousAggResult = new KeyValueStore<String, List<String>>(_conf);
+		_lastAggReceived = new KeyValueStore<String, List<String>>(_conf);
 		
 		InputDeclarer currentBolt = builder.setBolt(_ID, this, parallelism);
 		
-		// Grouping and initialize necessary storages
+		// grouping and initialize necessary storages
 		Component[] parents = cp.getParents();
 		AggregateOperator aggOpFirstEmitter = parents[0].getChainOperator().getAggregation();
 		AggregateOperator aggOpSecondEmitter = parents[1].getChainOperator().getAggregation();
 		if (aggOpFirstEmitter != null) {
 			if (aggOpFirstEmitter.hasGroupBy()) {
 				currentBolt = MyUtilities.attachEmitterCustom(conf, null, currentBolt, firstEmitter, secondEmitter);
-				_firstNestedQueryHasGroupBy = true;
+				_nestedQueryHasGroupBy = true;
 			}
 			else {
 				currentBolt = MyUtilities.attachEmitterAllGrouping(conf, currentBolt, firstEmitter);
 				currentBolt = MyUtilities.attachEmitterCustom(conf, _fullHashList, currentBolt, secondEmitter);
 			}
 		
-			_firstNestedQueryStorage = MyUtilities.createAggregationStorage(parents[0].getChainOperator().getAggregation(), conf); 
-			_firstCorrespondenceStorage = new KeyValueStore<String, String>(_conf);
+			_nestedQueryStorage = MyUtilities.createAggregationStorage(parents[0].getChainOperator().getAggregation(), conf); 
+			_nestedQueryCorrespondenceStorage = new KeyValueStore<String, String>(_conf);
+			_nestedQueryNbTuplesToJoinStorage = new KeyValueStore<String, String>(_conf);
 			_isFirstEmitterNestedQuery = true;
 		}
 		else if (aggOpSecondEmitter != null) {
 			if (aggOpSecondEmitter.hasGroupBy()) {
 				currentBolt = MyUtilities.attachEmitterCustom(conf, null, currentBolt, firstEmitter, secondEmitter);
-				_secondNestedQueryHasGroupBy = true;
+				_nestedQueryHasGroupBy = true;
 			}
 			else {
 				currentBolt = MyUtilities.attachEmitterAllGrouping(conf, currentBolt, secondEmitter);
 				currentBolt = MyUtilities.attachEmitterCustom(conf, _fullHashList, currentBolt, firstEmitter);
 			}
 			
-			_secondNestedQueryStorage = MyUtilities.createAggregationStorage(parents[1].getChainOperator().getAggregation(), conf); 
-			_secondCorrespondenceStorage = new KeyValueStore<String, String>(_conf);
+			_nestedQueryStorage = MyUtilities.createAggregationStorage(parents[1].getChainOperator().getAggregation(), conf); 
+			_nestedQueryCorrespondenceStorage = new KeyValueStore<String, String>(_conf);
+			_nestedQueryNbTuplesToJoinStorage = new KeyValueStore<String, String>(_conf);
 			_isSecondEmitterNestedQuery = true;
 		}
 		else {
@@ -198,36 +206,35 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 			
 			if(MyUtilities.isFinalAck(tuple, _conf)){
 				_numRemainingParents--;
+				if (_numRemainingParents == 0 && (_isFirstEmitterNestedQuery || _isSecondEmitterNestedQuery))
+					sendPreviousAggResult();
 				MyUtilities.processFinalAck(_numRemainingParents, _hierarchyPosition, stormTupleRcv, _collector, _periodicBatch);
 				return;
 			}
 
 			boolean isFromFirstEmitter = false;
 			BasicStore<ArrayList<String>> affectedStorage, oppositeStorage;
-			AggregationStorage affectedNestedQueryStorage;
-			KeyValueStore<String, String> affectedCorrespondenceStorage;
+			AggregationStorage affectedNestedQueryStorage = _nestedQueryStorage;
+			KeyValueStore<String, String> affectedCorrespondenceStorage = _nestedQueryCorrespondenceStorage;
+			KeyValueStore<String, String> affectedNumberOfTuplesToJoinStorage = _nestedQueryNbTuplesToJoinStorage;
 			ProjectOperator projPreAgg;
 			if(_firstEmitterIndex.equals(inputComponentIndex)){
 				//R update
 				isFromFirstEmitter = true;
 				affectedStorage = _firstSquallStorage;
 				oppositeStorage = _secondSquallStorage;
-				affectedNestedQueryStorage = _firstNestedQueryStorage;
-				affectedCorrespondenceStorage = _firstCorrespondenceStorage;
 				projPreAgg = _secondPreAggProj;
 			}else if(_secondEmitterIndex.equals(inputComponentIndex)){
 				//S update
 				isFromFirstEmitter = false;
 				affectedStorage = _secondSquallStorage;
 				oppositeStorage = _firstSquallStorage;
-				affectedNestedQueryStorage = _secondNestedQueryStorage;
-				affectedCorrespondenceStorage = _secondCorrespondenceStorage;
 				projPreAgg = _firstPreAggProj;
 			}else{
 				throw new RuntimeException("InputComponentName " + inputComponentIndex +
 						" doesn't match neither " + _firstEmitterIndex + " nor " + _secondEmitterIndex + ".");
 			}
-		
+			
 			if (_isFirstEmitterNestedQuery && isFromFirstEmitter) {
 				tuple = addTupleToStorageNestedQuery(affectedStorage,
 						affectedNestedQueryStorage, 
@@ -236,7 +243,7 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 						inputTupleString,
 						inputTupleMultiplicity,
 						inputTupleHash);
-				if (!_firstNestedQueryHasGroupBy)
+				if (!_nestedQueryHasGroupBy)
 					inputTupleHash = tuple.get(tuple.size() - 1);
 			}
 			else if (_isSecondEmitterNestedQuery && !isFromFirstEmitter) {
@@ -247,19 +254,27 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 						inputTupleString,
 						inputTupleMultiplicity,
 						inputTupleHash);
-				if (!_secondNestedQueryHasGroupBy)
+				if (!_nestedQueryHasGroupBy)
 					inputTupleHash = tuple.get(tuple.size() - 1);
 				
 			}
-			else { 
-				addTupleToStorage(affectedStorage, inputTupleHash, inputTupleString, inputTupleMultiplicity);
+			else {
+				//if nested query, don't store the same tuple with multiplicity greater than 1, but store them separately
+				if (_isFirstEmitterNestedQuery || _isSecondEmitterNestedQuery) {
+					inputTupleString = MyUtilities.addMultiplicityToTupleString(inputTupleString, inputTupleMultiplicity);
+					affectedStorage.insert(inputTupleHash, inputTupleString);
+				}
+				else 
+					addTupleToStorage(affectedStorage, inputTupleHash, inputTupleString, inputTupleMultiplicity);
 			}
 			
 			performJoin(stormTupleRcv,
 					tuple,
 					inputTupleHash,
+					inputTupleMultiplicity,
 					isFromFirstEmitter,
 					oppositeStorage,
+					affectedNumberOfTuplesToJoinStorage,
 					projPreAgg);
 			
 			_collector.ack(stormTupleRcv);
@@ -309,10 +324,14 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 						List<String> tuples = agg.getContent();
 						if (tuples != null) {
                             String columnDelimiter = MyUtilities.getColumnDelimiter(_conf);
+//							System.out.println("TUPLES: " + tuples + " - " + tuples.size());
 							for(String tuple: tuples){
 								String tupleHash = tuple.split(" = ")[0];
 								tuple = tuple.replaceAll(" = ", columnDelimiter);
-								//if we have nested query, send the previous aggregation result and update it for next time
+		//						System.out.println("BATCH SEND: tuple = " + tuple + " - (after processing: "+ MyUtilities.stringToTuple(tuple, _conf) + ")");
+//								System.out.println("tuple = " + tuple + "/"+ MyUtilities.stringToTuple(tuple, _conf));
+//								List<String> tupleSend = MyUtilities.stringToTuple(tuple, _conf);
+//								Collections.reverse(tupleSend);
 								if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null){
 									ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
 									if (values != null) {
@@ -322,11 +341,10 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 									}
 									else _previousAggResult.insert(tupleHash, MyUtilities.stringToTuple(tuple, _conf));
 								} 
-								//send the current aggregate
 								tupleSend(MyUtilities.stringToTuple(tuple, _conf), null, 1L);
 							}
 						}
-						
+
 						//clearing only if we don't have nested query
 						if (!(_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null))
 							agg.clearStorage();
@@ -432,15 +450,28 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 	protected void performJoin(Tuple stormTupleRcv,
 			List<String> tuple,
 			String inputTupleHash,
+			Long tupleMultiplicity,
 			boolean isFromFirstEmitter,
 			BasicStore<ArrayList<String>> oppositeStorage,
+			KeyValueStore<String, String> affectedNumberOfTuplesToJoinStorage,
 			ProjectOperator projPreAgg){
 
-		Long tupleMultiplicity = stormTupleRcv.getLongByField("Multiplicity");
+		String inputTupleString = MyUtilities.tupleToString(tuple, _conf);
 		List<String> oppositeStringTupleList = oppositeStorage.access(inputTupleHash);
-	
-		if(oppositeStringTupleList!=null)
-			for (int i = 0; i < oppositeStringTupleList.size(); i++) {
+		if(oppositeStringTupleList!=null) {
+			int size = oppositeStringTupleList.size();
+		
+			//only if it comes from a nested query, change the number of tuples to join with
+			if (_isFirstEmitterNestedQuery || _isSecondEmitterNestedQuery) {
+				size = updateSizeNbTuplesToJoinNestedQuery(inputTupleString, tuple, inputTupleHash, 
+						tupleMultiplicity, isFromFirstEmitter, 
+						oppositeStringTupleList, affectedNumberOfTuplesToJoinStorage);
+				if (size < 0)
+					return;
+			}
+		
+			for (int i = 0; i < size; i++) {
+				
 				String oppositeStringTuple= oppositeStringTupleList.get(i);
 				Long oppositeTupleMultiplicity = MyUtilities.getMultiplicityFromTupleString(oppositeStringTuple);
 				oppositeStringTuple = MyUtilities.getTupleString(oppositeStringTuple);
@@ -466,14 +497,13 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 					outputTuple = projPreAgg.process(outputTuple);
 				}
 				
-				//multiplicity for output tuple
 				Long multiplicityForOutputTuple = tupleMultiplicity * oppositeTupleMultiplicity;
 				
-				applyOperatorsAndSend(stormTupleRcv, outputTuple, multiplicityForOutputTuple);					
+				applyOperatorsAndSend(stormTupleRcv, outputTuple, multiplicityForOutputTuple);	
 			}
+		}
 	}
-			
-		
+
 	protected void applyOperatorsAndSend(Tuple stormTupleRcv, List<String> tuple, Object... tupleInfo){
 		if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
 			try {
@@ -493,11 +523,9 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 
 		_numSentTuples++;
 		printTuple(tuple);
-	        
 		
 		if(MyUtilities.isSending(_hierarchyPosition, _batchOutputMillis)){
-			//if we have nested query, send the previous aggregation result and update it for next time
-			if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null) {
+        	if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null) {
         		String tupleHash = MyUtilities.tupleToString(tuple.subList(0, tuple.size() - 1), _conf);
     			ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
     			if (values != null) {
@@ -521,10 +549,6 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 			MyUtilities.sendTuple(stormTupleSnd, stormTupleRcv, _collector, _conf);
 		}
 	
-	/*
-	 * used in nested queries only
-	 */
-	
 	private List<String> addTupleToStorageNestedQuery(BasicStore<ArrayList<String>> affectedStorage,
 			AggregationStorage affectedNestedQueryStorage,
 			KeyValueStore<String, String> affectedCorrespondenceStorage,
@@ -539,14 +563,13 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 		TypeConversion typeStorage = affectedNestedQueryStorage.getType();
 		ArrayList tuplesFromStorage = affectedNestedQueryStorage.access(inputTupleAggHash);
 		List<String> newTuple = new ArrayList<String>(tuple);
-		
 		if (tuplesFromStorage != null) {
 			if (inputTupleMultiplicity > 0) {
 				String currentAggValue = typeStorage.toString(tuplesFromStorage.get(0)); 
 				affectedCorrespondenceStorage.insert(inputTupleString, currentAggValue);
 				//modify tuple with current value for join
 				newTuple.set(newTuple.size() - 1, currentAggValue);
-				//add the new value to affected storage
+				//add the new value
 				affectedStorage.remove(inputTupleHash);
 				String tupleString = MyUtilities.tupleToString(newTuple, _conf);
 				tupleString = MyUtilities.addMultiplicityToTupleString(tupleString, inputTupleMultiplicity);//mult == 1
@@ -554,6 +577,7 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 			}
 			else {
 				ArrayList<String> values = affectedCorrespondenceStorage.access(inputTupleString);
+
 				if (values == null)
 					throw new RuntimeException("We should have a correspondence for this tuple " + inputTupleString);
 				String removedValue = values.get(0);
@@ -565,6 +589,80 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 		}
 		
 		return newTuple;
+	}
+	
+	/*
+	 * in case of nested query, if we have multiple tasks for the nested query,
+	 * we need to send the result of the join with the previous agg result from 
+	 * each of them, otherwise we would have a final result from all of them 
+	 * instead of only one, the last join result
+	 */
+	
+	private void sendPreviousAggResult() {
+		Set<String> keys = _nestedQueryNbTuplesToJoinStorage.keySet();
+		Iterator<String> it = keys.iterator();
+		while (it.hasNext()) {
+			String tupleString = it.next();
+			List<String> tuple = MyUtilities.stringToTuple(tupleString, _conf);
+			String tupleHash = MyUtilities.tupleToString(tuple.subList(0, tuple.size() - 1), _conf);
+			String prevResult = MyUtilities.tupleToString(_lastAggReceived.access(tupleHash).get(0), _conf);
+			if (!tupleString.equals(prevResult)) {
+				boolean isFromFirstEmitter = false;
+				BasicStore<ArrayList<String>> oppositeStorage;
+				if (_isFirstEmitterNestedQuery) {
+					isFromFirstEmitter = true;
+					oppositeStorage = _secondSquallStorage;
+				}
+				else oppositeStorage = _firstSquallStorage;
+				performJoin(null, tuple, tupleHash, -1L,
+						isFromFirstEmitter, oppositeStorage, _nestedQueryNbTuplesToJoinStorage, null);
+			}
+		}
+	}
+	
+	/*
+	 * keep track of number of tuples an aggregate value from the nested query has been joined with
+	 */
+	
+	private int updateSizeNbTuplesToJoinNestedQuery(String inputTupleString,
+			List<String> tuple,
+			String inputTupleHash,
+			Long tupleMultiplicity,
+			boolean isFromFirstEmitter,
+			List<String> oppositeStringTupleList,
+			KeyValueStore<String, String> affectedNumberOfTuplesToJoinStorage) {
+		int size = oppositeStringTupleList.size();
+		if ((_isFirstEmitterNestedQuery && isFromFirstEmitter)
+				|| (_isSecondEmitterNestedQuery && !isFromFirstEmitter)) {
+			if (tupleMultiplicity < 0) {
+				List<String> values = affectedNumberOfTuplesToJoinStorage.access(inputTupleString);
+				affectedNumberOfTuplesToJoinStorage.remove(inputTupleString);
+				if (values != null)
+					size = Integer.valueOf(values.get(0));
+				else return -1;
+			}
+			else {
+				affectedNumberOfTuplesToJoinStorage.insert(inputTupleString, String.valueOf(oppositeStringTupleList.size()));
+				ArrayList<List<String>> values = _lastAggReceived.access(inputTupleHash);
+					if (values != null) 
+						_lastAggReceived.update(inputTupleHash, values.get(0), tuple);
+					else  _lastAggReceived.insert(inputTupleHash, tuple);
+			}
+		}
+		else
+		{
+			//add if it doesn't exist or increment current value
+			String oppositeAggStringTuple = MyUtilities.getTupleString(oppositeStringTupleList.get(0));
+			List<String> values = (List<String>)affectedNumberOfTuplesToJoinStorage.access(oppositeAggStringTuple);
+			int currentSize = 0;
+			if (values != null) {
+				currentSize = Integer.valueOf(values.get(0)) + 1;
+				affectedNumberOfTuplesToJoinStorage.update(oppositeAggStringTuple, 
+						values.get(0), String.valueOf(currentSize));
+			}
+			else affectedNumberOfTuplesToJoinStorage.insert(oppositeAggStringTuple, "1"); 
+		}
+		return size;
 	}
 	
 	/*
@@ -611,12 +709,13 @@ public class StormDstJoin extends BaseRichBolt implements StormJoin, StormCompon
 					String tupleStringForTupleFromStorage = MyUtilities.getTupleString(tuple);
 					
 					if (tupleStringForTupleFromStorage.equals(inputTupleString)) {
-						if (Math.abs(inputTupleMultiplicity) == multiplicityForTupleFromStorage) 
+						if (Math.abs(inputTupleMultiplicity) == multiplicityForTupleFromStorage) {
 							affectedStorage.remove(inputTupleHash, tuple);
+						}
 						else if (Math.abs(inputTupleMultiplicity) < multiplicityForTupleFromStorage) {
-								tupleStringForTupleFromStorage = MyUtilities.addMultiplicityToTupleString(tupleStringForTupleFromStorage,
+							tupleStringForTupleFromStorage = MyUtilities.addMultiplicityToTupleString(tupleStringForTupleFromStorage,
 									multiplicityForTupleFromStorage + inputTupleMultiplicity);
-								affectedStorage.update(inputTupleHash, tuple, tupleStringForTupleFromStorage);
+							affectedStorage.update(inputTupleHash, tuple, tupleStringForTupleFromStorage);
 							}
 							else 
 								throw new RuntimeException("Received negative multiplicity for " +

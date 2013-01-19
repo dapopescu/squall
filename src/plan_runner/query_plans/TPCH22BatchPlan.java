@@ -24,6 +24,7 @@ import plan_runner.operators.SelectOperator;
 import plan_runner.predicates.ComparisonPredicate;
 
 /* Not the exact query TPCH22, but it is based on it
+ * This plan uses an additional component for aggregation in nested query
  * 
 			create view avg_customer as 
 					select
@@ -51,15 +52,16 @@ import plan_runner.predicates.ComparisonPredicate;
 			group by
 					cntrycode
  */
-public class TPCH22Plan {
+public class TPCH22BatchPlan {
 	
 	private QueryPlan _queryPlan = new QueryPlan();
 	private static final NumericConversion<Double> _doubleConv = new DoubleConversion();
-	 private static final TypeConversion<Double> _avgConv = new AverageConversion();
+	private static final TypeConversion<Double> _avgConv = new AverageConversion();
+	private static final TypeConversion<Double> _scount = new AverageConversion();
     private static final StringConversion _sc = new StringConversion();
 	private static final double zero = 0;
     
-	public TPCH22Plan(String dataPath, String extension, Map conf){
+	public TPCH22BatchPlan(String dataPath, String extension, Map conf){
 		  //-------------------------------------------------------------------------------------
         List<Integer> hashCustomer = Arrays.asList(0);
 
@@ -93,7 +95,18 @@ public class TPCH22Plan {
                 relationCustomer,
                 "AVG_CUSTOMER",
                 _queryPlan).setHashIndexes(Arrays.asList(0))
-                .addOperator(aggCustomer);
+                .addOperator(aggCustomer).setBatchOutputMillis(200);
+        
+        
+        AggregateOperator aggCustomerAll = new AggregateAvgOperator(new ColumnReference(_scount, 1), conf)
+		.setGroupByColumns(Arrays.asList(0));
+        
+        OperatorComponent avgCustomerAll = new OperatorComponent(
+                avgComponent,
+                "AVG_CUSTOMER_ALL",
+                _queryPlan).setHashIndexes(Arrays.asList(0))
+                .addOperator(aggCustomerAll);
+        
         //-------------------------------------------------------------------------------------
         List<Integer> hashCustomer2 = Arrays.asList(0);
 
@@ -137,7 +150,7 @@ public class TPCH22Plan {
         
         EquiJoinComponent C_C_Ojoin = new EquiJoinComponent(
         		C_Ojoin,
-        		avgComponent,
+        		avgCustomerAll,
         		_queryPlan).addOperator(selectC_C_Ojoin)
         					.addOperator(new ProjectOperator(new int[]{0, 1}))
         					.addOperator(aggSum)

@@ -196,7 +196,6 @@ public class AggregateAvgOperator implements AggregateOperator<SumCount> {
 
         @Override
         public List<String> getContent() {
-            //throw new UnsupportedOperationException("getContent for AggregateAvgOperator is not supported yet.");
         	 String str = _storage.getContent(); 
         	 if (str != null) {
         		 List<String> tuples = Arrays.asList(str.split("\\r?\\n"));

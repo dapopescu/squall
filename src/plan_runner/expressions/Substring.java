@@ -8,6 +8,10 @@ import plan_runner.conversion.TypeConversion;
 import plan_runner.utilities.MyUtilities;
 import plan_runner.visitors.ValueExpressionVisitor;
 
+/*
+ * Substring function : needs the start and the end indexes 
+ */
+
 public class Substring implements ValueExpression<String> {
 
 	/**

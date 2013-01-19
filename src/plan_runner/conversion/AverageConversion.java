@@ -1,5 +1,11 @@
 package plan_runner.conversion;
 
+/*
+ * Average is converted to the double value
+ * needed in expressions which have both double value and averages
+ * ex: quantity < avg(l_quantity)
+ */
+
 public class AverageConversion implements NumericConversion<Double>{
 	
 	/**

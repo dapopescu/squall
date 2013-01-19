@@ -36,7 +36,7 @@ import plan_runner.predicates.BetweenPredicate;
 import plan_runner.predicates.ComparisonPredicate;
 
 
-/*
+/* Uses an additional component for aggregation in nested query
  * select sum(l_extendedprice) / 7.0 as avg_yearly
 	from
 		lineitem,
@@ -53,7 +53,7 @@ import plan_runner.predicates.ComparisonPredicate;
 
 public class TPCH17BatchPlan {
 
-	 private static Logger LOG = Logger.getLogger(TPCH10Plan.class);
+	 private static Logger LOG = Logger.getLogger(TPCH17BatchPlan.class);
 
 	    private static final NumericConversion<Double> _doubleConv = new DoubleConversion();
 	    private static final TypeConversion<Double> _scount = new AverageConversion();
@@ -68,19 +68,6 @@ public class TPCH17BatchPlan {
 	      
 
 	        //-------------------------------------------------------------------------------------
-	       
-
-	       /* SelectOperator selectionPart1 = new SelectOperator(
-	        		 new ComparisonPredicate(
-	                         new ColumnReference(_sc, 3),
-	                         new ValueSpecification(_sc, _brand)
-	                     ));
-	        
-	        SelectOperator selectionPart2 = new SelectOperator(
-	        		 new ComparisonPredicate(
-	                         new ColumnReference(_sc, 6),
-	                         new ValueSpecification(_sc, _container)
-	                     ));*/
 	        
 	    	List<Integer> hashPart = Arrays.asList(0);
 
@@ -157,7 +144,7 @@ public class TPCH17BatchPlan {
 	                relationLineitem2,
 	                "AVG_LINEITEM",
 	                _queryPlan).setHashIndexes(hashLineitem2)
-	                .addOperator(aggLineitem).setBatchOutputMillis(1000);
+	                .addOperator(aggLineitem).setBatchOutputMillis(200);
 
 	        AggregateOperator aggLineitemAll = new AggregateAvgOperator(new ColumnReference(_scount, 1), conf)
 			.setGroupByColumns(Arrays.asList(0));

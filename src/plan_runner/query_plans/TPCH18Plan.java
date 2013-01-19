@@ -65,7 +65,7 @@ import plan_runner.predicates.ComparisonPredicate;
 
 public class TPCH18Plan {
 
-	 private static Logger LOG = Logger.getLogger(TPCH10Plan.class);
+	 private static Logger LOG = Logger.getLogger(TPCH18Plan.class);
 
 	    private static final NumericConversion<Double> _doubleConv = new DoubleConversion();
 	    private static final StringConversion _sc = new StringConversion();

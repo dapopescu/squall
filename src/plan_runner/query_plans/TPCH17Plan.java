@@ -53,7 +53,7 @@ import plan_runner.predicates.ComparisonPredicate;
 
 public class TPCH17Plan {
 
-	 private static Logger LOG = Logger.getLogger(TPCH10Plan.class);
+	 private static Logger LOG = Logger.getLogger(TPCH17Plan.class);
 
 	    private static final NumericConversion<Double> _doubleConv = new DoubleConversion();
 	    private static final TypeConversion<Double> _scount = new AverageConversion();
@@ -68,19 +68,6 @@ public class TPCH17Plan {
 	      
 
 	        //-------------------------------------------------------------------------------------
-	       
-
-	       /* SelectOperator selectionPart1 = new SelectOperator(
-	        		 new ComparisonPredicate(
-	                         new ColumnReference(_sc, 3),
-	                         new ValueSpecification(_sc, _brand)
-	                     ));
-	        
-	        SelectOperator selectionPart2 = new SelectOperator(
-	        		 new ComparisonPredicate(
-	                         new ColumnReference(_sc, 6),
-	                         new ValueSpecification(_sc, _container)
-	                     ));*/
 	        
 	    	List<Integer> hashPart = Arrays.asList(0);
 
@@ -186,4 +173,5 @@ public class TPCH17Plan {
 	    public QueryPlan getQueryPlan() {
 	        return _queryPlan;
 	    }
-}
+} 
+

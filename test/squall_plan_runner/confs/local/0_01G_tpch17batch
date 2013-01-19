@@ -1,0 +1,38 @@
+DIP_DISTRIBUTED false
+DIP_QUERY_NAME tpch17batch
+DIP_TOPOLOGY_NAME_PREFIX username
+DIP_NUM_ACKERS 1
+
+DIP_DATA_PATH /home/diana/workspace/Squall/test/data/tpch/
+DIP_DATA_ROOT /home/diana/workspace/Squall/test/data/tpch/
+DIP_RESULT_ROOT /home/diana/workspace/Squall/test/results/
+DIP_SQL_ROOT /home/diana/workspace/Squall/test/squall/sql_queries/
+DIP_SCHEMA_PATH /home/diana/workspace/Squall/test/squall/schemas/tpch.txt
+DIP_DB_SIZE 0.01
+
+PART_PAR 1
+LINEITEM_PAR 1
+PART_LINEITEM_PAR 1
+LINEITEM2_PAR 1         
+AVG_LINEITEM_PAR 1
+AVG_LINEITEM_ALL_PAR 1
+#PART_LINEITEM_AVG_LINEITEM_PAR 1
+PART_LINEITEM_AVG_LINEITEM_ALL_PAR 1
+
+
+#below are unlikely to change
+DIP_EXTENSION .tbl
+DIP_READ_SPLIT_DELIMITER \|
+DIP_GLOBAL_ADD_DELIMITER |
+DIP_GLOBAL_SPLIT_DELIMITER \|
+
+DIP_ACK_EVERY_TUPLE false
+DIP_KILL_AT_THE_END true
+
+# Storage manager parameters
+# Storage directory for local runs
+STORAGE_LOCAL_DIR /tmp/ramdisk
+# Storage directory for cluster runs
+STORAGE_CLUSTER_DIR /export/home/squalldata/storage 
+STORAGE_COLD_START true
+STORAGE_MEMORY_SIZE_MB 4096

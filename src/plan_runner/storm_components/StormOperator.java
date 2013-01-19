@@ -191,6 +191,7 @@ public class StormOperator extends BaseRichBolt implements StormEmitter, StormCo
                     	for(String tuple: tuples){
                     		String tupleHash = tuple.split(" = ")[0];
                     		tuple = tuple.replaceAll(" = ", columnDelimiter);
+                    		//if we have nested query, send the previous aggregation result and update it for next time
                     		if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null){
 								ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
 								if (values != null) {
@@ -200,11 +201,13 @@ public class StormOperator extends BaseRichBolt implements StormEmitter, StormCo
 								}
 								else _previousAggResult.insert(tupleHash, MyUtilities.stringToTuple(tuple, _conf));
 							} 
+                    		//send the current aggregate
                     		tupleSend(MyUtilities.stringToTuple(tuple, _conf), null, 1L);
                     	}
                     }
-                    //clearing
-                	agg.clearStorage();
+                    //clearing only if we don't have nested query
+                	if (!(_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null))
+                		agg.clearStorage();
                     
                     _semAgg.release();
                 }
@@ -304,7 +307,7 @@ public class StormOperator extends BaseRichBolt implements StormEmitter, StormCo
                 _semAgg.acquire();
             } catch (InterruptedException ex) {}
         }
-     
+       
         tuple = _operatorChain.process(tuple, tupleInfo);
         
         if(MyUtilities.isBatchOutputMode(_batchOutputMillis)){
@@ -320,6 +323,7 @@ public class StormOperator extends BaseRichBolt implements StormEmitter, StormCo
         printTuple(tuple);
         
         if(MyUtilities.isSending(_hierarchyPosition, _batchOutputMillis)){
+        	//if we have nested query, send the previous aggregation result and update it for next time
         	if (_hierarchyPosition != FINAL_COMPONENT && _operatorChain.getAggregation() != null) {
         		String tupleHash = MyUtilities.tupleToString(tuple.subList(0, tuple.size() - 1), _conf);
     			ArrayList<List<String>> values = _previousAggResult.access(tupleHash);
